@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+openai-agents # Assuming this is the correct package name for the SDK
+anthropic
+google-generativeai
+python-dotenv
+playwright # Required by browser-use, might be bundled or need separate install
+# browser-use # Assuming this is the library name - needs confirmation
+apscheduler
+pydantic
+requests # Likely needed for tools or API calls
+beautifulsoup4 # Often used with web scraping
+websockets # For FastAPI WebSocket support
