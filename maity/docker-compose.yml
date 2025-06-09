@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: maity-backend
+    ports:
+      # Map host port 8000 to container port 8000 (or $BACKEND_PORT)
+      - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
+    volumes:
+      # Mount local code for development (optional, remove for production image)
+      - ./backend:/app/backend
+      # Mount sandbox directory to persist generated apps/files outside container
+      - ./maity_sandbox:/app/maity_sandbox
+    env_file:
+      - .env # Load environment variables from .env file
+    # Ensure backend starts only after potential dependencies like a DB (if added)
+    # depends_on:
+    #   - database # Example if you add a database service
+    restart: unless-stopped
+    # Add healthcheck if needed
+
+  frontend:
+    build: ./frontend
+    container_name: maity-frontend
+    ports:
+      # Map host port 3000 to container port 80 (Nginx default)
+      - "${FRONTEND_PORT:-3000}:80"
+    # If frontend needs to talk to backend via API:
+    # depends_on:
+    #   - backend
+    restart: unless-stopped
+    # Note: For development, you might run the frontend dev server locally
+    # instead of using this Docker service. This service is more for
+    # serving the production build.
+
+volumes:
+  # Define the sandbox volume if you want it managed by Docker explicitly
+  # maity_sandbox_data: # Not strictly needed if using bind mount above
