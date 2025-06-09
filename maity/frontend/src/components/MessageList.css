@@ -1,0 +1,109 @@
+.message-list {
+  padding: 20px 10px; /* More padding */
+  overflow-y: auto;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px; /* Space between messages */
+}
+
+/* Custom scrollbar (Webkit browsers) */
+.message-list::-webkit-scrollbar {
+  width: 8px;
+}
+.message-list::-webkit-scrollbar-track {
+  background: #40414f; /* Scrollbar track color */
+}
+.message-list::-webkit-scrollbar-thumb {
+  background: #565869; /* Scrollbar thumb color */
+  border-radius: 4px;
+}
+.message-list::-webkit-scrollbar-thumb:hover {
+  background: #676a7f;
+}
+
+.message-list-empty {
+  text-align: center;
+  color: #8e8ea0; /* Adjusted for dark background */
+  padding: 30px;
+  font-size: 1rem;
+}
+
+.message-item {
+  display: flex; /* Use flex for avatar + content structure later if needed */
+  padding: 0; /* Remove padding from item, apply to content */
+  border-radius: 0; /* Remove, apply to content */
+  max-width: 85%; /* Slightly wider messages allowed */
+  word-wrap: break-word;
+}
+
+.message-content {
+  padding: 10px 15px; /* Padding inside the bubble */
+  border-radius: 8px; /* Rounded corners for the bubble */
+  font-size: 1rem; /* Standardized font size */
+  line-height: 1.5;
+}
+
+.message-from-user {
+  align-self: flex-end;
+}
+.message-from-user .message-content {
+  background-color: #007bff; /* User message color (can adjust for dark mode) */
+  color: white;
+  border-bottom-right-radius: 2px; /* ChatGPT like bubble shape */
+}
+
+.message-from-ai {
+  align-self: flex-start;
+}
+.message-from-ai .message-content {
+  background-color: #40414F; /* AI message color for dark mode */
+  color: #ECECEC;
+  border-bottom-left-radius: 2px; /* ChatGPT like bubble shape */
+}
+
+/* Style for AI error messages */
+.message-item.message-from-ai.error-message .message-content { /* More specific selector */
+  color: #ffcccc; /* Lighter red text for dark bg */
+  font-style: italic;
+}
+.message-item.message-from-ai.error-message .message-content { /* Modified to target content for error bg */
+   background-color: #5e3030 !important; /* Darker red bg for error bubble, ensure it overrides normal AI bg */
+   color: #ffcccc;
+   font-style: italic;
+}
+/* General pre tag styling within message content for code blocks */
+.message-content pre {
+  margin: 0 !important;
+  border-radius: 0 !important; /* Will be handled by wrapper */
+  font-size: 0.9rem !important;
+  white-space: pre-wrap !important;
+  word-wrap: break-word !important;
+}
+
+.code-block-wrapper {
+  background-color: #202123;
+  border-radius: 8px; /* Rounded corners for the entire code block */
+  margin: 8px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3); /* Softer shadow */
+  overflow: hidden;
+}
+
+/* Optional: Style for a language label if you add one later */
+/*
+.code-block-language-label {
+  font-size: 0.8em;
+  padding: 3px 10px;
+  background-color: #565869;
+  color: #ccc;
+  border-radius: 8px 8px 0 0;
+  display: inline-block;
+  margin-bottom: -1px; Prevent gap if pre has top margin
+}
+*/
+
+/* Ensure no extra background on the .message-content div if it only contains a code block */
+.message-content:has(> .code-block-wrapper:only-child) {
+    padding: 0;
+    background-color: transparent !important;
+}

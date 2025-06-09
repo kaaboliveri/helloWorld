@@ -1,0 +1,60 @@
+.message-input-form {
+  display: flex;
+  align-items: center; /* Vertically align items */
+  padding: 10px 15px;
+  border-top: 1px solid #40414f; /* Darker border */
+  background-color: #202123; /* Dark input area background */
+  position: fixed; /* Fixed input area */
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box; /* Include padding in width calculation */
+  z-index: 1000;
+}
+
+/* Wrapper for centering input field */
+.input-wrapper {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    max-width: 770px; /* Max width for input field area */
+    margin: 0 auto; /* Center the wrapper that contains input and button */
+}
+
+.message-input-field {
+  flex-grow: 1;
+  /* max-width: 770px; /* Max width for input field within centered content */ /* Moved to input-wrapper */
+  padding: 12px 18px; /* More padding */
+  border: 1px solid #40414f;
+  border-radius: 8px; /* Less roundness */
+  margin-right: 10px;
+  font-size: 1rem;
+  background-color: #40414F; /* Input field background */
+  color: #ECECEC; /* Input text color */
+}
+
+.message-input-field::placeholder {
+  color: #8e8ea0; /* Placeholder text color */
+}
+
+.message-input-button {
+  padding: 10px 15px; /* Adjust padding */
+  background-color: #007bff; /* Keep send button noticeable, or make it more subtle */
+  color: white;
+  border: none;
+  border-radius: 8px; /* Consistent border radius */
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex; /* For icon alignment if added later */
+  align-items: center;
+  justify-content: center;
+}
+
+.message-input-button:hover {
+  background-color: #0056b3;
+}
+
+.message-input-button:disabled {
+  background-color: #565869;
+  cursor: not-allowed;
+}

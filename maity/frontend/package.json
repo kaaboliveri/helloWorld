@@ -4,16 +4,31 @@
   "private": true,
   "description": "Frontend for Maity AI Agent",
   "scripts": {
-    "dev": "echo 'Run your frontend dev server (e.g., vite, react-scripts start)'",
-    "build": "echo 'Run your frontend build process (e.g., vite build, react-scripts build)'",
-    "start": "echo 'Serve the built frontend (e.g., serve -s build)'"
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
   "dependencies": {
-    "react": "^18.0.0", // Example dependency
-    "react-dom": "^18.0.0" // Example dependency
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.7.2",
+    "react-syntax-highlighter": "^15.5.0"
     // Add other dependencies: axios, state management, UI components, editor, etc.
   },
   "devDependencies": {
-    // Add build tools like vite or react-scripts
+    "react-scripts": "5.0.1"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }
