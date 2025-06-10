@@ -1,25 +1,21 @@
 import asyncio
-from openai_agents.tool import tool, ToolError # Use the actual import from openai-agents
-# from browser_use import Browser, BrowserTab # Hypothetical import from browser-use library
-from playwright.async_api import async_playwright # Using Playwright directly for more control
+from openai_agents.tool import tool, ToolError
+from playwright.async_api import async_playwright
+# Import necessary LLM client functions and ModelType
+from ..llm_clients import direct_llm_call, ModelType, get_model_configuration # Ensure get_model_configuration is also available if needed for specific params
 
-# --- Browser Management (Example - Needs proper lifecycle handling) ---
-# Global playwright instance or context managed per request/agent run?
-# Consider async context managers for setup/teardown.
+# (Keep existing _playwright, _browser, get_browser, close_browser, web_search_tool functions as they are)
 _playwright = None
 _browser = None
 
 async def get_browser():
-    """Manages a shared browser instance (simplistic)."""
     global _playwright, _browser
     if _browser is None:
         _playwright = await async_playwright().start()
-        # Consider launching with specific options, proxy, user data dir etc.
-        _browser = await _playwright.chromium.launch(headless=True) # Default to headless
+        _browser = await _playwright.chromium.launch(headless=True)
     return _browser
 
 async def close_browser():
-    """Closes the shared browser instance."""
     global _playwright, _browser
     if _browser:
         await _browser.close()
@@ -28,99 +24,126 @@ async def close_browser():
         await _playwright.stop()
         _playwright = None
 
-# --- Tool Definitions ---
-
 @tool("Performs a web search using DuckDuckGo and returns relevant results.")
 async def web_search_tool(query: str) -> str:
-    """
-    Performs a web search for the given query using DuckDuckGo and returns
-    a summary of the top results (e.g., title, snippet, URL).
-
-    Args:
-        query: The search query.
-
-    Returns:
-        A string containing formatted search results, or an error message.
-    """
     print(f"Executing web_search_tool with query: {query}")
     browser = await get_browser()
     page = await browser.new_page()
     results = []
     try:
         await page.goto(f"https://duckduckgo.com/?q={query}&ia=web")
-        # Wait for results to load (selector might need adjustment)
         await page.wait_for_selector(".result__a", timeout=10000)
-
         result_elements = await page.query_selector_all(".result")
-        for i, element in enumerate(result_elements[:5]): # Limit to top 5 results
+        for i, element in enumerate(result_elements[:5]):
             title_element = await element.query_selector(".result__a")
             snippet_element = await element.query_selector(".result__snippet")
             url = await title_element.get_attribute("href") if title_element else "N/A"
             title = await title_element.inner_text() if title_element else "N/A"
             snippet = await snippet_element.inner_text() if snippet_element else "N/A"
             results.append(f"Result {i+1}:\nTitle: {title}\nURL: {url}\nSnippet: {snippet}\n---")
-
         return "\n".join(results) if results else "No search results found."
-
     except Exception as e:
         print(f"Error during web search: {e}")
         raise ToolError(tool_name="web_search_tool", message=f"Failed to perform search: {e}")
     finally:
         await page.close()
-        # Consider if browser should be closed here or managed globally
 
-@tool("Navigates to a URL and extracts information based on a task description.")
+@tool("Navigates to a URL and extracts information or performs actions based on a task description.")
 async def browse_website_tool(url: str, task_description: str) -> str:
-    """
-    Navigates to a specific URL, analyzes the content, and performs actions
-    or extracts information as described in the task. For example, 'summarize the main points',
-    'find the contact email', 'extract the product price'.
-
-    Args:
-        url: The URL to browse.
-        task_description: A clear description of what information to extract or what action to perform.
-
-    Returns:
-        A string containing the extracted information or a confirmation of the action, or an error message.
-    """
     print(f"Executing browse_website_tool for URL: {url} with task: {task_description}")
-    # This is complex! It likely requires another LLM call (or the agent's LLM)
-    # to interpret the page content *in context* of the task_description.
-    # A simple implementation might just extract text content.
-    # A more advanced one (like browser-use aims for) uses accessibility trees or vision models.
 
     browser = await get_browser()
     page = await browser.new_page()
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000) # Increased timeout
 
-        # Simplistic approach: Get page text content
-        # For complex tasks, this text + task_description would need to be processed by an LLM.
-        content = await page.content() # Get HTML
-        # Or use page.evaluate to run JS and extract structured data
-        # Or use accessibility snapshot: accessibility.snapshot()
+        # Attempt to extract main content text using Playwright's evaluate method or selectors
+        # This can be more robust than just body.inner_text() for complex pages
+        try:
+            # Try to get main article content or a significant portion of the body
+            page_text = await page.evaluate('''() => {
+                const main = document.querySelector('main article, article, main, [role="main"]');
+                if (main) return main.innerText;
+                return document.body.innerText; // Fallback to full body text
+            }''')
+        except Exception as e:
+            print(f"Could not extract main text via JS, falling back to body text. Error: {e}")
+            page_text = await page.locator('body').inner_text(timeout=10000)
 
-        # TODO: Implement LLM call here to process content based on task_description
-        # Example placeholder:
-        page_text = await page.locator('body').inner_text(timeout=5000) # Extract visible text
-        # Limit text length to avoid excessive token usage
-        max_len = 8000
+
+        # Limit text length to avoid excessive token usage for the LLM call
+        # PRD mentioned Claude 3.7 Sonnet has 200K context, Gemini 2.5 Pro up to 8M (or 1M for text)
+        # Let's pick a reasonable limit for now, e.g. 50k characters, which is roughly 10k-15k tokens.
+        max_len = 50000
         if len(page_text) > max_len:
-            page_text = page_text[:max_len] + "... (truncated)"
+            page_text = page_text[:max_len] + "... (truncated due to length)"
 
-        # This should ideally be done by the main Agent/LLM using the retrieved text:
-        # llm_prompt = f"Based on the following text from {url}, {task_description}:\n\n{page_text}"
-        # extracted_info = await call_llm_for_extraction(llm_prompt) # Requires another LLM call logic
+        if not page_text.strip():
+            return f"Successfully navigated to {url}, but no significant text content could be extracted."
 
-        # Placeholder return:
-        extracted_info = f"Successfully navigated to {url}. Content needs further processing for task: '{task_description}'.\nFirst ~1000 chars:\n{page_text[:1000]}"
+        # --- LLM Call to process content based on task_description ---
+        # Choose a model suitable for this kind of task (e.g., Claude Sonnet or Gemini Pro)
+        # ModelType.CLAUDE_37_SONNET or ModelType.GEMINI_25_PRO
+        processing_model_id = ModelType.CLAUDE_37_SONNET.value
 
-        return extracted_info
+        llm_prompt_messages = [
+            {"role": "user", "content": f"""
+            Analyze the following text content extracted from the website: {url}
+            Perform the following task: "{task_description}"
+
+            Extracted text:
+            ---
+            {page_text}
+            ---
+
+            Based *only* on the provided text, provide a concise answer for the task.
+            If the information is not found in the text, state that clearly.
+            Do not make assumptions or use external knowledge.
+            """}
+        ]
+
+        print(f"Sending content from {url} to LLM ({processing_model_id}) for task: {task_description}")
+
+        try:
+            # Get model-specific parameters if any (e.g., thinking budget for Claude)
+            model_config = get_model_configuration(processing_model_id)
+            llm_params = model_config.get("default_params", {})
+
+            # Ensure thinking parameter is correctly formatted if it exists
+            # This check might be overly specific if direct_llm_call handles various formats
+            if "thinking" in llm_params and isinstance(llm_params["thinking"], int): # Assuming it could be just budget_ms
+                llm_params["thinking"] = {"budget_ms": llm_params["thinking"]}
+            elif "thinking" in llm_params and isinstance(llm_params["thinking"], dict) and "budget_ms" not in llm_params["thinking"]:
+                 # If 'thinking' is a dict but not in the expected format, try to adapt or warn
+                 # For now, let's assume get_model_configuration returns it in the correct dict format if it's a dict.
+                 pass
+
+
+            extracted_info = await direct_llm_call(
+                messages=llm_prompt_messages,
+                model_id=processing_model_id,
+                **llm_params # Pass model specific params
+            )
+
+            # Log first 100 chars of extracted_info
+            print(f"LLM response for browse_website_tool: {extracted_info[:100] if extracted_info else 'Empty response'}...")
+
+
+            if not extracted_info or not extracted_info.strip(): # Check for None or empty string
+                 return f"Successfully navigated to {url} and an LLM processed its content for task '{task_description}', but the LLM returned an empty response."
+
+            return f"Analysis of {url} for task '{task_description}':\n{extracted_info}"
+
+        except Exception as llm_error:
+            print(f"Error during LLM call in browse_website_tool: {llm_error}")
+            raise ToolError(tool_name="browse_website_tool", message=f"Failed to process content from {url} using LLM: {llm_error}")
 
     except Exception as e:
-        print(f"Error during website browse: {e}")
-        raise ToolError(tool_name="browse_website_tool", message=f"Failed to browse {url}: {e}")
+        print(f"Error during website browse for {url}: {e}")
+        # Check for specific Playwright errors if possible
+        if "net::ERR_NAME_NOT_RESOLVED" in str(e) or "Timeout" in str(e): # Simplified check
+             raise ToolError(tool_name="browse_website_tool", message=f"Failed to navigate to {url}. It might be unreachable or invalid.")
+        raise ToolError(tool_name="browse_website_tool", message=f"Failed to browse or process {url}: {e}")
     finally:
-        await page.close()
-
-# Add more tools as needed (e.g., fill_form, click_element) - these become complex quickly.
+        if page and not page.is_closed(): # Ensure page is not closed before closing
+            await page.close()

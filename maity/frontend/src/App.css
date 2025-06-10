@@ -27,9 +27,45 @@
   margin: 0;
   font-size: 1.2rem; /* Slightly smaller header text */
   font-weight: 500;
-  display: flex; /* To align title and button */
-  justify-content: space-between; /* Title on left, button on right */
+}
+
+/* This was part of .app-header h1, but should be on .app-header itself */
+.app-header {
+  /* ... existing styles from before ... */
+  background-color: #202123;
+  color: #ECECEC;
+  padding: 10px 20px;
+  display: flex; /* Use flexbox for alignment */
+  justify-content: space-between; /* Space between title and controls */
+  align-items: center; /* Vertically align items */
+  border-bottom: 1px solid #40414f;
+  position: fixed;
+  width: 100%;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  box-sizing: border-box;
+}
+
+.header-controls {
+  display: flex;
   align-items: center;
+  gap: 15px; /* Space between model selector and new chat button */
+}
+
+.model-selector {
+  background-color: #40414F;
+  color: #ECECEC;
+  border: 1px solid #565869;
+  padding: 8px 12px;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.model-selector:focus {
+  outline: none;
+  border-color: #007bff; /* Highlight on focus */
 }
 
 .new-chat-button {
@@ -54,8 +90,10 @@
   background-color: #202123; /* Match input area background */
 }
 
+/* Adjust chat window padding for the potentially taller header */
 .chat-window {
   display: flex;
+  padding-top: 60px !important; /* Increased padding if header is taller, ensure it applies */
   flex-direction: column;
   flex-grow: 1;
   overflow: hidden;

@@ -107,3 +107,95 @@
     padding: 0;
     background-color: transparent !important;
 }
+
+.system-info-message .message-content {
+  font-style: italic;
+  color: #a0a0a0; /* Lighter text for system info */
+  text-align: center;
+  font-size: 0.85em;
+  padding: 5px 10px !important; /* Ensure padding is applied and less than normal messages */
+  background-color: transparent !important; /* No bubble background */
+}
+.system-info-message {
+  background-color: transparent !important; /* No bubble for system info */
+  align-self: center !important; /* Center system info messages */
+  max-width: 100%;
+  /* Remove box-shadow or other bubble-like styles if they are on .message-item */
+  box-shadow: none !important;
+}
+
+/* General styling for Markdown elements within message content */
+.message-content p {
+  margin-top: 0;
+  margin-bottom: 0.5em; /* Space between paragraphs */
+}
+.message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.message-content ul, .message-content ol {
+  margin-top: 0;
+  margin-bottom: 0.5em;
+  padding-left: 20px; /* Indent lists */
+}
+
+.message-content li {
+  margin-bottom: 0.2em;
+}
+
+.message-content a {
+  color: #8ab4f8; /* Light blue for links, good for dark themes */
+  text-decoration: underline;
+}
+.message-content a:hover {
+  color: #aecbfa;
+}
+
+.message-content strong {
+  font-weight: bold;
+}
+
+.message-content em {
+  font-style: italic;
+}
+
+.message-content blockquote {
+  border-left: 3px solid #565869;
+  padding-left: 10px;
+  margin-left: 0;
+  color: #b0b0b0; /* Slightly dimmer for quotes */
+}
+
+.inline-code {
+  background-color: #202123; /* Darker code background, from index.css */
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 0.85em; /* Slightly smaller for inline */
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  color: #d0d0d0; /* Lighter text for inline code */
+}
+
+/* Ensure code block wrapper styling is still effective */
+.code-block-wrapper {
+  background-color: #1e1e1e; /* vscDarkPlus pre background, or match SyntaxHighlighter style's pre background */
+  border-radius: 5px;
+  margin: 8px 0 !important; /* Ensure margin is applied */
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+/* This targets the div PreTag from SyntaxHighlighter */
+.code-block-wrapper > div {
+    border-radius: 0 !important;
+    margin: 0 !important;
+}
+.fallback-pre { /* Styling for code blocks not caught by SyntaxHighlighter */
+    background-color: #2d2d2d;
+    color: #ccc;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 0.9em;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
