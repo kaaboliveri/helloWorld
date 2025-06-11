@@ -84,6 +84,28 @@ async def generate_app_tool(prompt: str) -> str:
     asyncio.create_task(run_app_generation_flow(project_id, prompt, project_path))
     return f"App generation started with Project ID: {project_id}. Path: {project_path}. Monitor status for updates."
 
+
+def _get_all_filepaths_from_plan(file_structure: Dict[str, Any], current_path: Path = Path(".")) -> List[Path]:
+    """
+    Helper to recursively get all file paths from the plan's file structure.
+
+    Args:
+        file_structure: The 'files' dictionary from the parsed plan.
+        current_path: The current base path for recursion (used internally).
+
+    Returns:
+        A list of Path objects representing all file paths.
+    """
+    paths = []
+    for name, content in file_structure.items():
+        new_path = current_path / name
+        if name.endswith('/'): # Directory
+            if isinstance(content, dict) and content: # Check if content is a dict and not empty
+                paths.extend(_get_all_filepaths_from_plan(content, new_path))
+        else: # File
+            paths.append(new_path)
+    return paths
+
 async def run_app_generation_flow(project_id: str, prompt: str, project_path: Path):
     try:
         await _send_status_update(project_id, "PLANNING", "Analyzing prompt and planning project structure...")
