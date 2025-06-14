@@ -1,201 +1,168 @@
 .message-list {
-  padding: 20px 10px; /* More padding */
+  padding: 20px 10px;
   overflow-y: auto;
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  gap: 12px; /* Space between messages */
+  gap: 12px;
 }
 
-/* Custom scrollbar (Webkit browsers) */
-.message-list::-webkit-scrollbar {
-  width: 8px;
-}
-.message-list::-webkit-scrollbar-track {
-  background: #40414f; /* Scrollbar track color */
-}
-.message-list::-webkit-scrollbar-thumb {
-  background: #565869; /* Scrollbar thumb color */
-  border-radius: 4px;
-}
-.message-list::-webkit-scrollbar-thumb:hover {
-  background: #676a7f;
-}
+.message-list::-webkit-scrollbar { width: 8px; }
+.message-list::-webkit-scrollbar-track { background: #40414f; }
+.message-list::-webkit-scrollbar-thumb { background: #565869; border-radius: 4px; }
+.message-list::-webkit-scrollbar-thumb:hover { background: #676a7f; }
 
-.message-list-empty {
-  text-align: center;
-  color: #8e8ea0; /* Adjusted for dark background */
-  padding: 30px;
-  font-size: 1rem;
-}
+.message-list-empty { text-align: center; color: #8e8ea0; padding: 30px; font-size: 1rem; }
 
 .message-item {
-  display: flex; /* Use flex for avatar + content structure later if needed */
-  padding: 0; /* Remove padding from item, apply to content */
-  border-radius: 0; /* Remove, apply to content */
-  max-width: 85%; /* Slightly wider messages allowed */
+  display: flex;
+  max-width: 85%;
   word-wrap: break-word;
 }
 
 .message-content {
-  padding: 10px 15px; /* Padding inside the bubble */
-  border-radius: 8px; /* Rounded corners for the bubble */
-  font-size: 1rem; /* Standardized font size */
+  padding: 10px 15px;
+  border-radius: 8px;
+  font-size: 1rem;
   line-height: 1.5;
 }
-
-.message-from-user {
-  align-self: flex-end;
-}
-.message-from-user .message-content {
-  background-color: #007bff; /* User message color (can adjust for dark mode) */
-  color: white;
-  border-bottom-right-radius: 2px; /* ChatGPT like bubble shape */
-}
-
-.message-from-ai {
-  align-self: flex-start;
-}
-.message-from-ai .message-content {
-  background-color: #40414F; /* AI message color for dark mode */
-  color: #ECECEC;
-  border-bottom-left-radius: 2px; /* ChatGPT like bubble shape */
-}
-
-/* Style for AI error messages */
-.message-item.message-from-ai.error-message .message-content { /* More specific selector */
-  color: #ffcccc; /* Lighter red text for dark bg */
-  font-style: italic;
-}
-.message-item.message-from-ai.error-message .message-content { /* Modified to target content for error bg */
-   background-color: #5e3030 !important; /* Darker red bg for error bubble, ensure it overrides normal AI bg */
-   color: #ffcccc;
-   font-style: italic;
-}
-/* General pre tag styling within message content for code blocks */
-.message-content pre {
-  margin: 0 !important;
-  border-radius: 0 !important; /* Will be handled by wrapper */
-  font-size: 0.9rem !important;
-  white-space: pre-wrap !important;
-  word-wrap: break-word !important;
-}
-
-.code-block-wrapper {
-  background-color: #202123;
-  border-radius: 8px; /* Rounded corners for the entire code block */
-  margin: 8px 0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.3); /* Softer shadow */
-  overflow: hidden;
-}
-
-/* Optional: Style for a language label if you add one later */
-/*
-.code-block-language-label {
-  font-size: 0.8em;
-  padding: 3px 10px;
-  background-color: #565869;
-  color: #ccc;
-  border-radius: 8px 8px 0 0;
-  display: inline-block;
-  margin-bottom: -1px; Prevent gap if pre has top margin
-}
-*/
-
-/* Ensure no extra background on the .message-content div if it only contains a code block */
+/* Remove default padding/bg if message content only has a code block wrapper */
 .message-content:has(> .code-block-wrapper:only-child) {
     padding: 0;
     background-color: transparent !important;
 }
 
+
+.message-from-user { align-self: flex-end; }
+.message-from-user .message-content {
+  background-color: #007bff;
+  color: white;
+  border-bottom-right-radius: 2px;
+}
+
+.message-from-ai { align-self: flex-start; }
+.message-from-ai .message-content {
+  background-color: #40414F;
+  color: #ECECEC;
+  border-bottom-left-radius: 2px;
+}
+
+.message-item.message-from-ai.error-message .message-content {
+   background-color: #5e3030 !important;
+   color: #ffcccc !important;
+   font-style: italic;
+}
+
 .system-info-message .message-content {
-  font-style: italic;
-  color: #a0a0a0; /* Lighter text for system info */
-  text-align: center;
-  font-size: 0.85em;
-  padding: 5px 10px !important; /* Ensure padding is applied and less than normal messages */
-  background-color: transparent !important; /* No bubble background */
+  font-style: italic; color: #a0a0a0; text-align: center; font-size: 0.85em;
+  padding: 5px 10px !important; background-color: transparent !important;
 }
 .system-info-message {
-  background-color: transparent !important; /* No bubble for system info */
-  align-self: center !important; /* Center system info messages */
-  max-width: 100%;
-  /* Remove box-shadow or other bubble-like styles if they are on .message-item */
-  box-shadow: none !important;
+  background-color: transparent !important; align-self: center !important;
+  max-width: 100%; box-shadow: none !important;
 }
 
-/* General styling for Markdown elements within message content */
-.message-content p {
-  margin-top: 0;
-  margin-bottom: 0.5em; /* Space between paragraphs */
-}
-.message-content p:last-child {
-  margin-bottom: 0;
-}
+/* General Markdown Styles */
+.message-content p { margin-top: 0; margin-bottom: 0.5em; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content ul, .message-content ol { margin-top: 0; margin-bottom: 0.5em; padding-left: 20px; }
+.message-content li { margin-bottom: 0.2em; }
+.message-content a { color: #8ab4f8; text-decoration: underline; }
+.message-content a:hover { color: #aecbfa; }
+.message-content strong { font-weight: bold; }
+.message-content em { font-style: italic; }
+.message-content blockquote { border-left: 3px solid #565869; padding-left: 10px; margin-left: 0; color: #b0b0b0; }
 
-.message-content ul, .message-content ol {
-  margin-top: 0;
-  margin-bottom: 0.5em;
-  padding-left: 20px; /* Indent lists */
-}
-
-.message-content li {
-  margin-bottom: 0.2em;
-}
-
-.message-content a {
-  color: #8ab4f8; /* Light blue for links, good for dark themes */
-  text-decoration: underline;
-}
-.message-content a:hover {
-  color: #aecbfa;
-}
-
-.message-content strong {
-  font-weight: bold;
-}
-
-.message-content em {
-  font-style: italic;
-}
-
-.message-content blockquote {
-  border-left: 3px solid #565869;
-  padding-left: 10px;
-  margin-left: 0;
-  color: #b0b0b0; /* Slightly dimmer for quotes */
-}
-
+/* Inline Code */
 .inline-code {
-  background-color: #202123; /* Darker code background, from index.css */
+  background-color: #202123;
   padding: 0.2em 0.4em;
   border-radius: 3px;
-  font-size: 0.85em; /* Slightly smaller for inline */
+  font-size: 0.85em;
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
-  color: #d0d0d0; /* Lighter text for inline code */
+  color: #d0d0d0;
 }
 
-/* Ensure code block wrapper styling is still effective */
+/* Code Block Specific Styles */
 .code-block-wrapper {
-  background-color: #1e1e1e; /* vscDarkPlus pre background, or match SyntaxHighlighter style's pre background */
-  border-radius: 5px;
-  margin: 8px 0 !important; /* Ensure margin is applied */
+  position: relative;
+  background-color: #1e1e1e;
+  border-radius: 5px; /* Overall wrapper radius */
+  margin: 8px 0 !important;
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-  overflow: hidden;
+  overflow: hidden; /* Ensures children respect border radius */
 }
-/* This targets the div PreTag from SyntaxHighlighter */
-.code-block-wrapper > div {
-    border-radius: 0 !important;
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    background-color: #333;
+    border-bottom: 1px solid #444;
+    /* Top corners are part of .code-block-wrapper's radius if this has no top radius itself */
+}
+
+.language-name {
+    font-size: 0.8em;
+    color: #ccc;
+    font-family: sans-serif;
+}
+
+.copy-code-button {
+  background-color: #4a4a4a;
+  color: #ddd;
+  border: 1px solid #555;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8em;
+  transition: background-color 0.2s;
+}
+.copy-code-button:hover { background-color: #5a5a5a; }
+.copy-code-button:active { background-color: #6a6a6a; }
+
+/* SyntaxHighlighter's PreTag="div" styling */
+.code-block-wrapper > div[style*="font-family:"] { /* Targets the div from SyntaxHighlighter */
+    border-radius: 0 0 5px 5px !important; /* Bottom corners match wrapper */
     margin: 0 !important;
+    font-size: 0.9rem !important; /* Ensure consistent font size for code */
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
 }
-.fallback-pre { /* Styling for code blocks not caught by SyntaxHighlighter */
-    background-color: #2d2d2d;
+/* Ensure <pre> inside SyntaxHighlighter's div also behaves */
+.code-block-wrapper > div[style*="font-family:"] pre {
+    margin: 0 !important;
+    border-radius: 0 !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+}
+
+
+/* Fallback for simple preformatted text (e.g. ``` text ``` or ```plaintext single line```) */
+.fallback-wrapper {
+    position: relative; /* For copy button */
+    background-color: #2d2d2d; /* Add bg here for the wrapper */
+    border-radius: 5px; /* Consistent radius */
+}
+.fallback-wrapper .copy-code-button.simple-copy-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    z-index: 1;
+}
+.fallback-pre, .fallback-wrapper .simple-pre {
+    background-color: transparent; /* Transparent as wrapper has bg */
     color: #ccc;
     padding: 10px;
-    border-radius: 4px;
+    border-radius: inherit; /* Inherit from .fallback-wrapper */
     overflow-x: auto;
     font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
     font-size: 0.9em;
     white-space: pre-wrap;
     word-wrap: break-word;
+    margin: 0;
+}
+.fallback-wrapper .simple-pre {
+    padding-top: 35px; /* Space for absolutely positioned button */
 }

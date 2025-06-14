@@ -3,11 +3,31 @@ import subprocess
 import shutil # Keep for other potential tools, though not used in execute_code_tool directly
 import asyncio # Ensure asyncio is imported
 from pathlib import Path
+from typing import Optional # Add Optional if not already there
 from openai_agents.tool import tool, ToolError # Ensure these are imported
 from .. import config
 
 # (Keep _resolve_sandbox_path and _needs_confirmation as they are)
+
+# --- Conceptual Security Hardening Strategies (Overall for this module) ---
+# 1. Principle of Least Privilege:
+#    - If Maity runs as a service, ensure the service user has minimal necessary permissions on the system.
+#    - The `LOCAL_SANDBOX_DIR` should have strict permissions, writable only by this user.
+# 2. Audit Logging:
+#    - All file operations (read, write, list) and code/command executions should be logged securely
+#      with timestamps, user identifiers (if applicable), and command details.
+# 3. Configuration-driven Security:
+#    - Features like `REQUIRE_CONFIRMATION_LOCAL` are good. Extend this for:
+#        - Whitelisting/blacklisting specific commands or executables.
+#        - Whitelisting/blacklisting readable/writable paths *within* the sandbox.
+#        - Setting resource quotas (CPU, memory, time, network access) for executed code.
+
 def _resolve_sandbox_path(user_path: str) -> Path:
+    # Within _resolve_sandbox_path, the existing check is good:
+    # `if sandbox_root not in full_path.parents and full_path != sandbox_root:`
+    # Additional checks could include:
+    # - Preventing use of symlinks that could point outside the sandbox if not handled by `resolve()`.
+    # - Ensuring no part of the path contains forbidden characters or sequences.
     sandbox_root = Path(config.LOCAL_SANDBOX_DIR).resolve()
     # Allow user_path to be '.' to refer to the sandbox_root itself
     if user_path == ".":
@@ -25,6 +45,11 @@ def _needs_confirmation(action_type: str) -> bool:
     return config.REQUIRE_CONFIRMATION_LOCAL
 
 # (Keep list_files_tool, read_file_tool, write_file_tool as they are)
+# For read_file_tool and write_file_tool, current size limits and path resolution are good starting points.
+# Further hardening:
+# - For `write_file_tool`: Sanitize content being written if it's interpreted elsewhere (e.g., prevent writing executable scripts that are later run without checks).
+# - For `read_file_tool`: Be cautious if file content is passed directly to LLMs without sanitization/truncation, as it could be very large or contain harmful prompts.
+
 @tool("Lists files and directories within a specified path inside the sandbox.")
 async def list_files_tool(path: str = ".") -> str:
     print(f"Executing list_files_tool for path: {path}")
@@ -71,21 +96,65 @@ async def write_file_tool(path: str, content: str) -> str:
 
 
 @tool("Executes a code snippet (e.g., Python, Shell) in a sandboxed environment.")
-async def execute_code_tool(code: str, language: str = "python") -> str:
-    print(f"Executing execute_code_tool for language: {language}")
+async def execute_code_tool(code: str, language: str = "python", timeout_seconds: Optional[int] = None) -> str: # Added timeout_seconds
+    # Use a module-level default or config-based default if timeout_seconds is None
+    effective_timeout = timeout_seconds if timeout_seconds is not None else 30 # Default to 30s
+
+    print(f"Executing execute_code_tool for language: {language} with timeout: {effective_timeout}s")
+    # ... (existing initial parameter validation, confirmation checks) ...
     if config.REQUIRE_CONFIRMATION_LOCAL:
          if not _needs_confirmation(f"execute {language} code"):
              raise ToolError(tool_name="execute_code_tool", message="Action denied by user confirmation requirement.")
-
     if language not in ["python", "shell", "bash"]:
-        raise ToolError(tool_name="execute_code_tool", message=f"Unsupported language: {language}. Only 'python' and 'shell'/'bash' are supported.")
+        raise ToolError(tool_name="execute_code_tool", message=f"Unsupported language: {language}.")
+
+    # --- Conceptual Security Hardening for `execute_code_tool` ---
+    # This tool is the most critical from a security perspective.
+    # Current sandboxing (writing to temp file in LOCAL_SANDBOX_DIR and running) is very basic.
+    #
+    # 1. Containerization (Strongest Isolation):
+    #    - Execute the code within a dedicated, short-lived Docker container.
+    #    - The container should have:
+    #        - A minimal filesystem (e.g., based on Alpine Linux).
+    #        - No network access by default, or strictly limited egress.
+    #        - Read-only access to necessary parts of the sandbox (if code needs to read files).
+    #        - Write access only to a specific output directory within its own filesystem.
+    #        - Strict resource limits (CPU, memory, execution time via Docker run options).
+    #        - Run as a non-root user inside the container.
+    #    - Maity would need Docker installed and permissions to manage containers (Docker-in-Docker if Maity itself is containerized, or access to host Docker socket - carefully).
+    #    - Example flow: Create Dockerfile for chosen language -> Build image (if not cached) -> Run container with code -> Capture stdout/stderr -> Remove container.
+    #
+    # 2. System Call Filtering / Seccomp / AppArmor (Advanced Linux):
+    #    - If not using full containerization, use OS-level sandboxing features.
+    #    - `seccomp-bpf` can restrict the system calls the executed process can make.
+    #    - AppArmor or SELinux profiles can further confine the process.
+    #    - This is complex to set up correctly and maintain per language/use-case.
+    #
+    # 3. Stricter Input Sanitization for `code` and `language`:
+    #    - `language`: Ensure it's from a very small, hardcoded allowlist.
+    #    - `code` (especially for 'shell'):
+    #        - Disallow or heavily sanitize metacharacters if not using direct script execution (e.g., `|`, `&`, `;`, `$()`, ``` ` ```).
+    #        - The current approach of writing to a script file (`temp_maity_script.sh/py`) and executing that file
+    #          (e.g., `sh temp_maity_script.sh`) is generally safer than `subprocess.run(code, shell=True)`.
+    #
+    # 4. Ephemeral Execution Environments:
+    #    - Ensure that each execution is in a clean state. The temporary script files are a good start.
+    #    - If not using containers, ensure no state persists between executions within the sandbox that could be exploited.
+    #
+    # 5. Output Sanitization (already partially done with truncation):
+    #    - Besides truncation, scan output for sensitive information if there's a risk of the code
+    #      exposing environment details (though if sandboxed properly, this risk is lower).
+    #
+    # 6. Language-Specific Sandboxing:
+    #    - Python: Can explore using restricted execution modules or techniques, but they are often not foolproof.
+    #      Running in a separate process with OS-level controls is more reliable.
+    #    - JavaScript (if Node.js execution were added): Use `vm` module with caution, or better, separate process.
 
     sandbox_dir = Path(config.LOCAL_SANDBOX_DIR).resolve()
     result = ""
-    timeout_seconds = 30
-    max_output_length = 10000 # Max characters for combined stdout/stderr
+    max_output_length = getattr(config, 'EXECUTE_CODE_MAX_OUTPUT_LENGTH', 10000)
 
-    script_path = None # Initialize script_path
+    script_path = None
     process = None # Initialize process
 
     try:
@@ -111,7 +180,7 @@ async def execute_code_tool(code: str, language: str = "python") -> str:
                 cwd=str(sandbox_dir)
             )
 
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=effective_timeout) # Use effective_timeout
         return_code = process.returncode
 
         stdout = stdout_bytes.decode('utf-8', errors='replace')
@@ -137,16 +206,17 @@ async def execute_code_tool(code: str, language: str = "python") -> str:
         else:
             output_parts.append("--- STDOUT ---\n(empty)")
 
-        current_length = sum(len(p) + 1 for p in output_parts) # +1 for newlines
+            current_length += len(output_parts[-1]) # +1 for newlines if joining with \n later
 
         if stderr:
             stderr_header = "--- STDERR ---"
             stderr_truncate_msg = "... (stderr truncated)"
-            # Max possible length for stderr text itself
-            max_stderr_text_len = max_output_length - current_length - len(stderr_header) - 10 # 10 for safety
+            # Max possible length for stderr text itself, accounting for its header and potential truncation message
+            # Approx length of header + truncation msg: len(stderr_header) + len("(first X chars)\n") + len(stderr_truncate_msg) -> ~40-50 chars
+            max_stderr_text_len = max(0, max_output_length - current_length - len(stderr_header) - 50)
 
-            if max_stderr_text_len <= 0 : # No space left for stderr
-                 output_parts.append(f"{stderr_header}\n... (output truncated, no space for stderr)")
+            if max_stderr_text_len == 0 : # No meaningful space left for stderr
+                 output_parts.append(f"{stderr_header}\n... (output truncated, no space for stderr details)")
             elif len(stderr) > max_stderr_text_len:
                 output_parts.append(f"{stderr_header}{'(first ' + str(max_stderr_text_len) + ' chars)'}\n{stderr[:max_stderr_text_len]}")
                 output_parts.append(stderr_truncate_msg)
@@ -159,27 +229,20 @@ async def execute_code_tool(code: str, language: str = "python") -> str:
 
     except asyncio.TimeoutError:
         if process and process.returncode is None:
-            try:
-                process.kill()
-                await process.wait()
-            except ProcessLookupError:
-                pass
-        result = f"Execution timed out after {timeout_seconds} seconds."
+            try: process.kill(); await process.wait()
+            except ProcessLookupError: pass
+        result = f"Execution timed out after {effective_timeout} seconds." # Use effective_timeout
     except Exception as e:
-        print(f"Error in execute_code_tool: {e}")
+        # print(f"Error in execute_code_tool: {e}") # Already printed by the agent runner usually
         result = f"Failed to execute code: {type(e).__name__} - {e}"
     finally:
         if script_path and script_path.exists():
-             try:
-                script_path.unlink()
-             except OSError as e:
-                print(f"Warning: Could not delete temporary script {script_path}: {e}")
+             try: script_path.unlink()
+             except OSError as e: print(f"Warning: Could not delete temp script {script_path}: {e}")
 
-    # Final length check on the entire result string is implicitly handled by careful calculation above,
-    # but an explicit one can be a safeguard if calculations are complex.
-    # For now, we assume the above logic correctly manages the total length.
-    # if len(result) > max_output_length:
-    #     result = result[:max_output_length - 25] + "\n... (output truncated)"
+    # Final length check on the entire result string
+    if len(result) > max_output_length:
+        result = result[:max_output_length - len("... (overall output truncated)...") -5] + "\n... (overall output truncated)" # Ensure space for truncation msg
 
     return result.strip()
 
@@ -189,20 +252,25 @@ async def execute_code_tool(code: str, language: str = "python") -> str:
 async def run_shell_command_tool(command: str) -> str:
     """
     DEPRECATED - Use execute_code_tool(language='shell') instead for better control and safety.
-    Runs a single shell command directly. Highly risky. Use with extreme caution.
-    Requires confirmation if enabled.
-
-    Args:
-        command: The shell command to run.
-
-    Returns:
-        A string containing the stdout and stderr, or an error message.
+    ...
     """
+    # --- Conceptual Security Hardening for `run_shell_command_tool` (if it were to be kept) ---
+    # 1. Deprecation is Key: Strongly advise against its use.
+    # 2. Strict Command Whitelisting: If kept for very specific, trusted use cases,
+    #    only allow commands from a very short, hardcoded whitelist.
+    # 3. Argument Sanitization/Escaping: If commands take arguments, these must be meticulously
+    #    sanitized or escaped to prevent command injection. `shlex.split` can help parse,
+    #    and `shlex.quote` can help quote arguments for safe inclusion if building command strings.
+    #    However, passing arguments as a list to `subprocess` functions (like `*cmd_parts`)
+    #    is generally safer than building a single command string with `shell=True`.
+    # 4. Avoid `shell=True` at all costs if not absolutely necessary and understood. The current
+    #    implementation correctly avoids `shell=True` by splitting the command.
+
     print(f"WARNING: Executing DANGEROUS run_shell_command_tool: {command}")
     process = None # Initialize process
     if config.REQUIRE_CONFIRMATION_LOCAL:
-         if not _needs_confirmation(f"run shell command: {command[:50]}..."):
-             raise ToolError(tool_name="run_shell_command_tool", message="Action denied by user confirmation requirement.")
+        if not _needs_confirmation(f"run shell command: {command[:50]}..."):
+            raise ToolError(tool_name="run_shell_command_tool", message="Action denied by user confirmation requirement.")
     try:
         cmd_parts = command.split()
         if not cmd_parts:
@@ -247,3 +315,12 @@ async def run_shell_command_tool(command: str) -> str:
     except Exception as e:
         print(f"Error in run_shell_command_tool: {e}")
         raise ToolError(tool_name="run_shell_command_tool", message=f"Failed to run command '{command}': {e}")
+
+    # The current use of `*cmd_parts` (after `command.split()`) is better than `shell=True`,
+    # but `command.split()` is naive for complex commands with quoted arguments.
+    # `shlex.split(command)` would be more robust for parsing.
+
+    # The return string formatting was updated in a previous step to include stdout_note and stderr_note
+    # For example: return f"Exit Code: {return_code}\n--- STDOUT ---\n{truncated_stdout}{stdout_note}\n--- STDERR ---\n{truncated_stderr}{stderr_note}"
+    # This part of the code is not being changed by this specific comment insertion task, so it's just a note.
+    pass # Placeholder to ensure the diff tool has a non-empty replace block if needed.

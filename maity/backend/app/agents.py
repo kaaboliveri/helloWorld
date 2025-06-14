@@ -65,11 +65,26 @@ class MaityAgent:
         print(f"Handling message for conversation {self.conversation_id}: {message[:100]}...")
         self._add_message("user", message)
 
-        # --- Model Selection Logic ---
-        # TODO: Implement smarter model selection based on message content/history
-        selected_model_id = preferred_model or ModelType.CLAUDE_37_SONNET.value # Default to Claude 3.7
+        # --- Conceptual Enhancements for Model Selection ---
+        # 1. Task Complexity Analysis:
+        #    - Before choosing a model, analyze the user's message and conversation history.
+        #    - If the task seems simple (e.g., quick question, summarization of short text),
+        #      a faster/cheaper model like o3-mini might be sufficient even if not preferred.
+        #    - If complex (e.g., coding, deep research, app generation request), a more powerful
+        #      model (Claude 3.7, Gemini 2.5 Pro) should be prioritized.
+        #    - This could involve a preliminary LLM call to classify task complexity or keyword heuristics.
+        # 2. Tool-Specific Model Overrides:
+        #    - Some tools might inherently benefit from specific models. E.g., `generate_app_tool`
+        #      might always default to Gemini 2.5 Pro or Claude 3.7 Sonnet for its internal planning/codegen steps,
+        #      regardless of the user's general preference for the main chat interaction.
+        #    - The agent could maintain a mapping of (tool_name -> preferred_model_for_tool_use).
+        # 3. Cost/Benefit Analysis (Very Advanced):
+        #    - If multiple models could do the job, factor in relative costs and typical performance
+        #      for the type of task. (Requires up-to-date knowledge of model pricing/capabilities).
+
+        selected_model_id = preferred_model or ModelType.CLAUDE_37_SONNET.value
         model_config = get_model_configuration(selected_model_id)
-        print(f"Selected model: {selected_model_id}")
+        print(f"Selected model for main interaction: {selected_model_id}")
 
         # --- Agent and Runner Setup (using OpenAI Agents SDK) ---
         # Create agent instance for this run
@@ -91,14 +106,28 @@ class MaityAgent:
         runner = Runner(agent=sdk_agent) # Runner manages the loop
 
         response_content = "An unexpected error occurred."
-        final_output = None
-        tool_calls_info = []
-        error_occurred = False
-        debug_info = {"model_used": selected_model_id, "tool_calls": tool_calls_info}
+        # ... (final_output, tool_calls_info, error_occurred, debug_info initialization) ...
+        debug_info = {"model_used": selected_model_id, "tool_calls": []} # Ensure tool_calls is initialized
 
         try:
-            # Run the agent loop
-            # The runner takes the full message history
+            # --- Conceptual Enhancements for Agent's Internal Planning & Tool Use (within SDK's scope) ---
+            # The OpenAI Agents SDK's `Runner` handles the primary loop of thought, tool choice, observation.
+            # Enhancements here are more about how *this MaityAgent class* interacts with or configures the SDK Agent.
+            # 1. Pre-computation/Contextual Priming for Runner:
+            #    - Before `runner.run()`, if the task clearly implies a specific tool (e.g., user says "generate an app about X"),
+            #      could we somehow prime the SDK Agent or provide stronger initial instructions/context
+            #      to guide its first few steps? (Depends on SDK capabilities).
+            # 2. Dynamic Tool Enablement/Disablement (Advanced):
+            #    - Based on conversation context or user permissions (if implemented),
+            #      dynamically adjust the list of `ALL_TOOLS` passed to the `Agent` constructor.
+            #      E.g., disable `execute_code_tool` if the user is in a restricted mode.
+            # 3. Iterative Refinement with User for Complex Tasks:
+            #    - For tools like `generate_app_tool`, the first call might produce a plan.
+            #    - The agent could present this plan to the user for confirmation/modification
+            #      *before* proceeding with the full generation. This involves yielding control,
+            #      getting user feedback, and then re-running the agent/tool with updated instructions.
+            #      (This is a complex control flow beyond a single `runner.run()`.)
+
             run_result = await runner.run(messages=self._get_history())
 
             # Process the result
@@ -123,33 +152,54 @@ class MaityAgent:
         except ToolError as e:
             error_msg = f"Error using tool '{e.tool_name}': {e.message}"
             print(error_msg)
-            response_content = f"(Agent error: {error_msg})"
-            self._add_message("assistant", response_content) # Log error as assistant message
-            error_occurred = True
+            response_content = f"(Agent error: {error_msg})" # Keep it simple for user
+            self._add_message("assistant", response_content)
+            # error_occurred = True # Ensure this is set if used
             debug_info["error"] = error_msg
-        except HandoffRefusalError as e:
+
+            # --- Conceptual Enhancements for Tool Error Handling & Recovery ---
+            # 1. Error Classification:
+            #    - Is the error transient (e.g., network hiccup, API rate limit)? -> Retry.
+            #    - Is it due to bad input arguments from the LLM for the tool? -> Re-prompt LLM with error context.
+            #    - Is it a fatal tool error (e.g., tool misconfiguration, sandbox issue)? -> Inform user, maybe suggest alternative.
+            # 2. Retry Logic for Tools:
+            #    - For some tools (e.g., web_search_tool on network error), a simple retry (1-2 times) might work.
+            #    - This would require catching specific exceptions or error messages.
+            # 3. Re-Prompting LLM on Bad Tool Input:
+            #    - If ToolError indicates LLM provided invalid arguments (e.g., wrong format, missing required arg):
+            #      `new_prompt = f"Your previous attempt to use {e.tool_name} failed because: {e.message}.
+            #                     The required arguments are: {tool_schema}. Please try again with correct arguments."`
+            #      Then, re-run the agent loop with this new instruction added to history. (Complexifies state).
+            # 4. Asking User for Clarification:
+            #    - If a tool fails consistently or the agent can't determine how to fix its input:
+            #      `response_content = f"I tried to use {e.tool_name} but encountered an issue: {e.message}.
+            #                         Could you please clarify X or try rephrasing your request?"`
+
+        except HandoffRefusalError as e: # Assuming this is from openai-agents SDK
+            # ... (existing HandoffRefusalError handling) ...
             error_msg = f"Agent refused to hand off: {e}"
             print(error_msg)
             response_content = f"(Agent error: {error_msg})"
             self._add_message("assistant", response_content)
-            error_occurred = True
             debug_info["error"] = error_msg
+
         except Exception as e:
-            # Catch potential API errors, SDK internal errors, etc.
-            error_msg = f"An unexpected error occurred during agent execution: {e}"
+            # ... (existing generic Exception handling) ...
+            error_msg = f"An unexpected error occurred in agent: {type(e).__name__} - {str(e)}"
             print(error_msg)
-            response_content = f"(System error: Please try again later. Details: {e})"
-            # Don't add this raw error to history usually, but log it
-            error_occurred = True
-            debug_info["error"] = error_msg
-            # Potentially add a generic error message to history
-            self._add_message("assistant", "I encountered an unexpected issue. Please try rephrasing your request or try again later.")
+            # For user, a generic message is often better unless it's a known, actionable issue
+            response_content = f"(System error: I encountered an issue. Please try again or rephrase.)"
+            # self._add_message("assistant", response_content) # Decide if this detailed error goes to history
+            debug_info["error"] = error_msg # Log detailed error for debugging
+            # Add a generic message to history for the user
+            if not any(m['role'] == 'assistant' and m['content'] == response_content for m in self._get_history()[-2:]): # Avoid duplicate generic errors
+                 self._add_message("assistant", "I encountered an unexpected issue. Please try rephrasing your request or try again later.")
 
 
         return {
             "content": response_content,
             "conversation_id": self.conversation_id,
-            "error": error_occurred,
+            "error": bool(debug_info.get("error")), # Simplified error reporting
             "debug_info": debug_info
         }
 

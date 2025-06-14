@@ -1,27 +1,88 @@
-import React from 'react';
+// In maity/frontend/src/components/MessageList.js
+import React, { useState } from 'react'; // Added useState for copy button state
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
-// Renamed markdown to mdLang to avoid conflict with the 'markdown' variable from SyntaxHighlighter.registerLanguage
+// Assuming styles and languages are already imported as they were for code block rendering step
 import { jsx, javascript, python, css, shell, sql, yaml, json, markdown as mdLang } from 'react-syntax-highlighter/dist/esm/languages/prism';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import './MessageList.css';
 
-// Register languages for SyntaxHighlighter
+// Register languages (ensure this is done, can be outside component if module-level)
 SyntaxHighlighter.registerLanguage('jsx', jsx);
 SyntaxHighlighter.registerLanguage('javascript', javascript);
-SyntaxHighlighter.registerLanguage('js', javascript); // common alias
+SyntaxHighlighter.registerLanguage('js', javascript);
 SyntaxHighlighter.registerLanguage('python', python);
-SyntaxHighlighter.registerLanguage('py', python); // common alias
+SyntaxHighlighter.registerLanguage('py', python);
 SyntaxHighlighter.registerLanguage('css', css);
 SyntaxHighlighter.registerLanguage('shell', shell);
-SyntaxHighlighter.registerLanguage('bash', shell); // common alias
+SyntaxHighlighter.registerLanguage('bash', shell);
 SyntaxHighlighter.registerLanguage('sql', sql);
 SyntaxHighlighter.registerLanguage('yaml', yaml);
 SyntaxHighlighter.registerLanguage('json', json);
 SyntaxHighlighter.registerLanguage('markdown', mdLang);
-SyntaxHighlighter.registerLanguage('md', mdLang); // common alias
+SyntaxHighlighter.registerLanguage('md', mdLang);
+
+
+// Define CodeBlock component separately to manage its own state for "Copied" message
+const CodeBlockWithCopy = ({ language, codeString, inline, className, children, ...props }) => {
+    const [isCopied, setIsCopied] = useState(false);
+
+    const handleCopy = () => {
+        navigator.clipboard.writeText(codeString).then(() => {
+            setIsCopied(true);
+            setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
+        }, (err) => {
+            console.error('Failed to copy code: ', err);
+            // Optionally, provide error feedback to user, e.g., set another state variable
+        });
+    };
+
+    if (inline) { // Handle inline code - no copy button for inline
+        return <code className="inline-code" {...props}>{children}</code>;
+    }
+
+    const detectedLanguage = language || 'plaintext';
+
+    // Fallback for code blocks without a determined language class (e.g., ```text``` or just ```code```)
+    // or if SyntaxHighlighter shouldn't be used for very simple plaintext.
+    // This condition means: if the language is 'plaintext' AND it's a single line of code.
+    // If it's multiline plaintext, it will still go to SyntaxHighlighter to get line numbers if enabled.
+    if (detectedLanguage === 'plaintext' && codeString.split('\n').length <= 1 && !className?.includes('language-')) {
+         return (
+            <div className="code-block-wrapper fallback-wrapper">
+                <button onClick={handleCopy} className="copy-code-button simple-copy-button">
+                    {isCopied ? 'Copied!' : 'Copy'}
+                </button>
+                <pre className="fallback-pre simple-pre"><code {...props}>{children}</code></pre>
+            </div>
+         );
+    }
+
+    return (
+        <div className="code-block-wrapper">
+            <div className="code-block-header">
+                <span className="language-name">{detectedLanguage}</span>
+                <button onClick={handleCopy} className="copy-code-button">
+                    {isCopied ? 'Copied!' : 'Copy'}
+                </button>
+            </div>
+            <SyntaxHighlighter
+                style={vscDarkPlus}
+                language={detectedLanguage} // Use detectedLanguage which defaults to 'plaintext' if needed
+                PreTag="div"
+                showLineNumbers={detectedLanguage !== 'plaintext' && codeString.split('\n').length > 1}
+                wrapLines={true}
+                customStyle={{ margin: '0', borderRadius: '0', borderBottomLeftRadius: '5px', borderBottomRightRadius: '5px' }}
+                codeTagProps={{ style: { fontSize: '0.9rem', fontFamily: "source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace" } }}
+                {...props}
+            >
+                {codeString}
+            </SyntaxHighlighter>
+        </div>
+    );
+};
 
 
 const MessageList = ({ messages }) => {
@@ -29,61 +90,44 @@ const MessageList = ({ messages }) => {
     return <div className="message-list-empty">No messages yet. Start chatting!</div>;
   }
 
-  // Custom renderer for code blocks within ReactMarkdown
   const markdownComponents = {
     code({ node, inline, className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '');
-      const language = match && match[1] ? match[1] : 'plaintext';
-      // Ensure children is an array and join, then trim. Handle case where children might be just a string.
-      const codeString = Array.isArray(children) ? children.join('') : String(children);
-      const trimmedCodeString = codeString.replace(/\n$/, '');
+      // language will be null if no match (e.g. ```text``` or just ```), defaults to 'plaintext' in CodeBlockWithCopy
+      const language = match && match[1] ? match[1] : null;
+      const codeString = String(children).replace(/\n$/, '');
 
-
-      if (inline) { // Handle inline code
-        return <code className="inline-code" {...props}>{children}</code>;
-      }
-
-      return !inline && match ? (
-        <div className="code-block-wrapper">
-          {/* Optional: Add a language label here if desired */}
-          {/* <div className="code-block-language-label">{language}</div> */}
-          <SyntaxHighlighter
-            style={vscDarkPlus}
-            language={language}
-            PreTag="div" // Use div instead of pre to avoid nesting pre tags if react-markdown wraps in one
-            showLineNumbers={language !== 'plaintext' && trimmedCodeString.split('\n').length > 1}
-            wrapLines={true}
-            customStyle={{ margin: '0', borderRadius: '0' }} // Overwrite default margin of pre from highlighter
-            codeTagProps={{ style: { fontSize: '0.9rem', fontFamily: "source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace" } }}
-            {...props}
-          >
-            {trimmedCodeString}
-          </SyntaxHighlighter>
-        </div>
-      ) : (
-         // Fallback for code blocks without a language or other issues (should be rare with GFM)
-        <pre className="code-block-wrapper fallback-pre"><code className={className} {...props}>{children}</code></pre>
+      return (
+        <CodeBlockWithCopy
+          language={language} // Pass potentially null language
+          codeString={codeString}
+          inline={inline}
+          className={className} // Pass original className for fallback pre/code if needed
+          {...props}
+        >
+          {children}
+        </CodeBlockWithCopy>
       );
     }
   };
 
-  const renderMessageContent = (text) => {
-    // Ensure text is a string
-    const messageText = typeof text === 'string' ? text : String(text);
-    // Replace escaped newlines \n with actual newlines before passing to Markdown parser
-    // This is important if the AI sends text with double-escaped newlines.
-    const processedText = messageText.replace(/\\n/g, '\n');
-
-    return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={markdownComponents}
-      >
-        {processedText}
-      </ReactMarkdown>
-    );
+  const renderContent = (text, sender) => {
+    const messageText = typeof text === 'string' ? text : String(text || '');
+    if (sender === 'ai') {
+      const processedText = messageText.replace(/\\n/g, '\n');
+      return (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {processedText}
+        </ReactMarkdown>
+      );
+    }
+    return messageText.split('\n').map((line, i, arr) => (
+        <React.Fragment key={i}>{line}{i < arr.length - 1 && <br />}</React.Fragment>
+    ));
   };
-
 
   return (
     <div className="message-list">
@@ -93,7 +137,7 @@ const MessageList = ({ messages }) => {
           className={`message-item message-from-${msg.sender} ${msg.isError ? 'error-message' : ''} ${msg.isSystemInfo ? 'system-info-message' : ''}`}
         >
           <div className="message-content">
-            {renderMessageContent(msg.text)}
+            {renderContent(msg.text, msg.sender)}
           </div>
         </div>
       ))}

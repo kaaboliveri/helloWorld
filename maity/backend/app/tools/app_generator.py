@@ -134,6 +134,11 @@ async def run_app_generation_flow(project_id: str, prompt: str, project_path: Pa
     try:
         # --- Planning Phase ---
         await _send_status_update(project_id, "PLANNING", "Analyzing prompt and planning project structure...")
+        # Conceptual Error Handling for Planning:
+        # - If LLM call for planning fails, retry N times with backoff.
+        # - If JSON parsing fails, could try to "clean" the raw_plan_response (e.g., extract from markdown)
+        #   or ask LLM to reformat its last response strictly as JSON.
+        # - If plan validation fails, could ask LLM to regenerate the plan adhering to the schema.
         planning_model_id = ModelType.CLAUDE_37_SONNET.value
         planning_prompt_content = f"""You are an expert software architect. Based on the user prompt: "{prompt}"
 Generate a detailed plan as a single JSON object. This JSON should include keys: "stack" (object with tech details like language, framework, database, and optionally 'default_port' as a number), "files" (nested object for file structure, dir keys end with '/', file values are null), "components_description" (string), and "data_models_description" (string).
@@ -157,6 +162,9 @@ Be thorough with the file list for the chosen stack.
             return
 
         # --- Structure Creation ---
+        # Conceptual Error Handling for Structure Creation:
+        # - Mostly relies on filesystem permissions. Errors here are likely critical.
+        # - Log specific path and error. May need to halt.
         if not parsed_plan or not isinstance(parsed_plan.get("files"), dict):
             await _send_status_update(project_id, "ERROR", "Plan 'files' structure is invalid or missing after planning.")
             return
@@ -186,6 +194,24 @@ Be thorough with the file list for the chosen stack.
                     _generated_apps[project_id]['files'][file_rel_path] = "Error: Security path violation."
                     _generated_apps[project_id]['logs'].append(f"Skipped file (security): {file_rel_path}")
                     continue
+
+            # Conceptual Error Handling for Individual File Generation:
+            # 1. Retry Strategy:
+            #    - Implement a retry loop (e.g., 2-3 attempts per file).
+            #    - On failure, log the error from the LLM or file writing.
+            # 2. Prompt Variation for Retries:
+            #    - First retry: Use the exact same prompt.
+            #    - Second retry: Modify prompt, e.g., "The previous attempt to generate {file_rel_path} failed.
+            #      Please ensure the output is only raw code. The error was: {previous_error_snippet}. Try again."
+            #    - Or, if error suggests code was too long: "Please regenerate {file_rel_path} but be more concise."
+            # 3. Critical File Failure vs. Non-Critical:
+            #    - Define a list of "critical" files (e.g., main entry points, package.json, requirements.txt).
+            #    - If a critical file fails all retries, the entire app generation might be marked as "FAILED".
+            #    - If a non-critical file fails (e.g., a specific component, a test file), mark it as failed,
+            #      log the error, and continue with other files. The app might be partially functional.
+            # 4. LLM Self-Correction (Advanced):
+            #    - Feed the erroneous generated code + error message back to the LLM and ask it to debug/fix its own code.
+
                 await _send_status_update(project_id, "CODE_GENERATING_FILE",
                                           message=f"Generating: {file_rel_path} ({i+1}/{len(all_files_to_generate)})",
                                           current_file=file_rel_path, files_completed=i, files_total=len(all_files_to_generate))
@@ -193,87 +219,203 @@ Be thorough with the file list for the chosen stack.
                 # Simplified codegen LLM call for this example. Previous detailed prompt should be used.
                 codegen_prompt = f"Generate code for {file_rel_path} given stack: {parsed_plan.get('stack')} and project context: {parsed_plan.get('components_description')}"
                 try:
+                # ... (existing codegen_prompt construction) ...
+                # ... (existing LLM call for file_content) ...
+                # ... (existing cleaning of file_content) ...
+                # ... (existing file_abs_path.write_text(...)) ...
+                # ... (existing success status update) ...
                     file_content = await direct_llm_call(messages=[{"role": "user", "content": codegen_prompt}], model_id=codegen_model_id, **get_model_configuration(codegen_model_id).get("default_params", {}))
-                    # ... (cleaning and writing file_content) ...
                     file_abs_path.write_text(file_content.strip(), encoding='utf-8')
                     _generated_apps[project_id]['files'][file_rel_path] = "Generated"
                     _generated_apps[project_id]['files_completed'] = i + 1
                     await _send_status_update(project_id, "CODE_GENERATION_FILE_COMPLETE", message=f"Generated: {file_rel_path}", current_file=file_rel_path, files_completed=i+1)
                 except Exception as gen_error:
+                # ... (existing error logging and status update for this file) ...
+                # Current: logs error and continues. Future: Implement retry/critical file logic here.
                     _generated_apps[project_id]['files'][file_rel_path] = f"Error: {type(gen_error).__name__}"
                     _generated_apps[project_id]['logs'].append(f"Error generating {file_rel_path}: {type(gen_error).__name__}")
+                _generated_apps[project_id]['logs'].append(f"Conceptual: File {file_rel_path} failed. Retry logic would go here.")
                     await _send_status_update(project_id, "ERROR", message=f"Failed on {file_rel_path}", current_file=file_rel_path, error_details=str(gen_error)[:100])
-            await _send_status_update(project_id, "CODE_GENERATION_ALL_FILES_ATTEMPTED", "Code generation finished.")
+                # If retries exhausted or critical file:
+                # await _send_status_update(project_id, "FATAL_ERROR", f"Critical file {file_rel_path} failed generation. Aborting.")
+                # return # Stop the entire process
+
+        await _send_status_update(project_id, "CODE_GENERATION_ALL_FILES_ATTEMPTED", "Code generation finished.")
 
         # --- Execution Phase ---
-        await _send_status_update(project_id, "EXECUTION_START", "Starting execution: installing dependencies and attempting to run.")
-        _generated_apps[project_id]['logs'].append("--- Execution Phase ---")
+        await _send_status_update(project_id, "EXECUTION_START", "Starting execution phase...")
+        current_logs = _generated_apps[project_id].get('logs', [])
+        current_logs.append("--- Execution Phase ---")
+        _generated_apps[project_id]['logs'] = current_logs
+
+        # Conceptual Error Handling for Installation Commands:
+        # 1. Retry on Transient Errors:
+        #    - If `execute_code_tool` output suggests a network issue for `pip install` or `npm install`,
+        #      a brief delay and retry might resolve it.
+        # 2. Parse Specific Errors:
+        #    - For `pip install`: Look for "Could not find a version that satisfies the requirement", "No matching distribution found".
+        #      This might indicate an issue in `requirements.txt`. Could potentially try to ask LLM to fix `requirements.txt`.
+        #    - For `npm install`: Look for "404 Not Found" for a package, or peer dependency conflicts.
+        #      LLM might be able to suggest fixes to `package.json`.
+        # 3. Fallback/Skip:
+        #    - If an install command fails after retries, halt the execution phase. The app likely won't run.
 
         install_commands = []
         run_command = None
-        app_port = parsed_plan.get("stack", {}).get("default_port", 8080)
-        if not isinstance(app_port, int): app_port = 8080 # Ensure port is int
+        # Get default port from plan's stack or default to 8080
+        # Ensure stack and default_port exist gracefully
+        stack_info = parsed_plan.get("stack", {})
+        app_port = stack_info.get("default_port")
+        try:
+            app_port = int(app_port) if app_port is not None else 8080
+        except ValueError:
+            app_port = 8080 # Fallback if parsing fails
+            _generated_apps[project_id]['logs'].append(f"Warning: Could not parse 'default_port' from plan stack ('{stack_info.get('default_port')}'). Defaulting to {app_port}.")
 
-        if (project_path / "requirements.txt").exists():
-            install_commands.append("pip install -r requirements.txt")
-            main_py_paths = ["main.py", "app/main.py", "backend/main.py"]
-            main_py_module_options = {"main.py":"main:app", "app/main.py":"app.main:app", "backend/main.py":"backend.main:app"}
-            for p_opt, m_opt in main_py_module_options.items():
-                if (project_path / p_opt).exists():
-                    run_command = f"uvicorn {m_opt} --host 0.0.0.0 --port {app_port}"
-                    break
-        if (project_path / "package.json").exists():
+
+        # Determine install and run commands
+        package_json_path = project_path / "package.json"
+        requirements_txt_path = project_path / "requirements.txt"
+
+        if package_json_path.exists():
             install_commands.append("npm install")
-            run_command = run_command or f"npm run dev -- --port {app_port}"
+            try:
+                with open(package_json_path, 'r', encoding='utf-8') as f:
+                    pkg_json = json.load(f)
+                scripts = pkg_json.get("scripts", {})
+                if "start" in scripts:
+                    run_command = "npm start"
+                elif "dev" in scripts:
+                    run_command = "npm run dev"
+                else: # Fallback if no common script, try generic node server if main file exists
+                    main_js_options = ["server.js", "index.js", "app.js", "main.js"]
+                    for js_file in main_js_options:
+                        if (project_path / js_file).exists():
+                            run_command = f"node {js_file}"
+                            break
+                if run_command and app_port != 8080: # Heuristic: try to append port if not default and using dev script
+                    if "npm run dev" in run_command or "next dev" in run_command: # Common Next.js / Vite
+                         run_command += f" -- --port {app_port}"
+                    # Other frameworks might use PORT= env var, which is harder to inject here simply
+            except Exception as e:
+                _generated_apps[project_id]['logs'].append(f"Warning: Could not parse package.json to find run command: {e}")
+                # Keep any previously inferred run_command or let it be None
+
+        elif requirements_txt_path.exists(): # Check this only if package.json didn't determine a NodeJS project
+            install_commands.append("pip install -r requirements.txt")
+            # Prioritized check for main.py location
+            main_py_locations = {
+                "backend.main:app": project_path / "backend" / "main.py",
+                "app.main:app": project_path / "app" / "main.py",
+                "main:app": project_path / "main.py"
+            }
+            found_main_module = None
+            for module_path_str, abs_path_to_check in main_py_locations.items():
+                if abs_path_to_check.exists():
+                    found_main_module = module_path_str
+                    break
+
+            if found_main_module:
+                run_command = f"uvicorn {found_main_module} --host 0.0.0.0 --port {app_port}"
+            else:
+                 _generated_apps[project_id]['logs'].append("requirements.txt found, but no common main.py (main:app, app.main:app, backend.main:app) found for uvicorn.")
+
 
         if not install_commands and not run_command:
-            _generated_apps[project_id]['logs'].append("No standard dependency/run files. Skipping execution.")
-            await _send_status_update(project_id, "EXECUTION_SKIPPED", "Could not determine install/run commands.")
+            _generated_apps[project_id]['logs'].append("Skipping execution: No standard dependency or run files (requirements.txt, package.json) found, or could not determine run command.")
+            await _send_status_update(project_id, "EXECUTION_SKIPPED", "Could not determine installation or run commands.")
             return
 
+        # Execute Install Commands (copied from previous, ensure it's robust)
         for cmd in install_commands:
-            await _send_status_update(project_id, "EXECUTION_INSTALLING", f"Running: {cmd}")
+            install_timeout = 180 # Longer timeout for installations (3 minutes)
+            await _send_status_update(project_id, "EXECUTION_INSTALLING", f"Running: {cmd} (timeout: {install_timeout}s)")
             _generated_apps[project_id]['logs'].append(f"$ {cmd}")
             try:
-                install_output = await execute_code_tool(code=cmd, language="shell")
-                _generated_apps[project_id]['logs'].append(install_output)
-                if "Exit Code: 0" not in install_output.split('\n')[0] and "Successfully installed" not in install_output and "added" not in install_output: # Added "added" for npm
-                    raise ToolError("execute_code_tool", f"Install cmd '{cmd}' failed. Output: {install_output[:200]}")
-                await _send_status_update(project_id, "EXECUTION_INSTALL_COMPLETE", f"Install '{cmd}' finished.")
+                install_output_str = await execute_code_tool(code=cmd, language="shell", timeout_seconds=install_timeout)
+
+                # Parse output for structured logging/status
+                exit_code_str = install_output_str.split("Exit Code: ")[1].split('\n')[0] if "Exit Code: " in install_output_str else "N/A"
+                stdout_content = install_output_str.split("--- STDOUT ---", 1)[1].split("--- STDERR ---", 1)[0].strip() if "--- STDOUT ---" in install_output_str else "N/A"
+                stderr_content = install_output_str.split("--- STDERR ---", 1)[1].strip() if "--- STDERR ---" in install_output_str else "N/A"
+
+                _generated_apps[project_id]['logs'].append(f"Exit Code: {exit_code_str}")
+                if stdout_content and stdout_content != "(empty)": _generated_apps[project_id]['logs'].append(f"STDOUT:\n{stdout_content}")
+                if stderr_content and stderr_content != "(empty)": _generated_apps[project_id]['logs'].append(f"STDERR:\n{stderr_content}")
+
+                exec_details = {"command": cmd, "exit_code": exit_code_str, "stdout": stdout_content, "stderr": stderr_content}
+
+                if exit_code_str != "0" and not ("already satisfied" in stdout_content or "updated" in stdout_content or "added" in stdout_content or "found" in stdout_content): # Refined check
+                    raise ToolError("execute_code_tool", f"Install cmd '{cmd}' failed. Exit Code: {exit_code_str}. Stderr (first 100): {stderr_content[:100]}")
+
+                await _send_status_update(project_id, "EXECUTION_INSTALL_COMPLETE", f"Install '{cmd}' finished.", exec_details=exec_details)
             except ToolError as e:
-                _generated_apps[project_id]['logs'].append(f"Install error: {e.message}")
-                await _send_status_update(project_id, "ERROR", f"Install failed: {cmd}. Error: {e.message}", error_details=e.message)
+                _generated_apps[project_id]['logs'].append(f"Installation error: {e.message}")
+                _generated_apps[project_id]['logs'].append(f"Conceptual: Install command '{cmd}' failed. LLM debugging could be attempted.")
+                await _send_status_update(project_id, "ERROR", f"Installation failed: {cmd}. Error: {e.message}", exec_details={"command": cmd, "error": e.message})
+                # await _send_status_update(project_id, "ERROR", f"Installation failed: {cmd}. LLM could try to fix dependencies.", ...)
                 return
 
-        if run_command:
-            await _send_status_update(project_id, "EXECUTION_RUNNING_APP", f"Attempting short run: {run_command}")
-            _generated_apps[project_id]['logs'].append(f"$ {run_command} (short run/check)")
-            try:
-                run_output = await execute_code_tool(code=run_command, language="shell")
-                _generated_apps[project_id]['logs'].append(run_output)
-                preview_url_val = f"http://localhost:{app_port}" # Construct hypothetical URL
-                _generated_apps[project_id]['preview_url'] = preview_url_val
+        # Conceptual Error Handling for Run Command:
+        # 1. Analyze Stderr:
+        #    - If `execute_code_tool` (for the short run check) returns stderr, analyze it for common issues:
+        #        - "Port already in use": Could try to increment `app_port` and regenerate relevant config / re-run. (Complex)
+        #        - "ModuleNotFoundError" / "cannot find module": Suggests an issue with imports or generated structure. LLM might fix.
+        #        - Other framework-specific startup errors.
+        # 2. Alternative Run Commands:
+        #    - If the primary inferred `run_command` fails (e.g., `npm run dev`), try a fallback if known (e.g., `npm start`).
+        # 3. User Feedback Loop (Future - Advanced):
+        #    - If automated attempts fail: "App generated but failed to start with error: {stderr}. Would you like me to try X, Y, or Z?"
 
-                if "timed out" in run_output.lower():
-                    await _send_status_update(project_id, "EXECUTION_APP_RUN_SIMULATED", f"App started (simulated by timeout): {run_command}.", preview_url=preview_url_val)
-                elif "error" in run_output.lower() or "failed" in run_output.lower():
-                     raise ToolError("execute_code_tool", f"App '{run_command}' failed on startup. Output: {run_output[:200]}")
+        # Attempt to Run the Application (Simulated/Short-lived)
+        if run_command:
+            run_app_timeout = 15 # Shorter timeout for app start check (15 seconds)
+            await _send_status_update(project_id, "EXECUTION_RUNNING_APP", f"Attempting run: {run_command} (timeout: {run_app_timeout}s)")
+            _generated_apps[project_id]['logs'].append(f"$ {run_command} (short run check)")
+            try:
+                run_output_str = await execute_code_tool(code=run_command, language="shell", timeout_seconds=run_app_timeout)
+
+                exit_code_str = run_output_str.split("Exit Code: ")[1].split('\n')[0] if "Exit Code: " in run_output_str else "N/A"
+                stdout_content = run_output_str.split("--- STDOUT ---", 1)[1].split("--- STDERR ---", 1)[0].strip() if "--- STDOUT ---" in run_output_str else "N/A"
+                stderr_content = run_output_str.split("--- STDERR ---", 1)[1].strip() if "--- STDERR ---" in run_output_str else "N/A"
+
+                _generated_apps[project_id]['logs'].append(f"Exit Code: {exit_code_str}")
+                if stdout_content and stdout_content != "(empty)": _generated_apps[project_id]['logs'].append(f"STDOUT:\n{stdout_content}")
+                if stderr_content and stderr_content != "(empty)": _generated_apps[project_id]['logs'].append(f"STDERR:\n{stderr_content}")
+
+                exec_details = {"command": run_command, "exit_code": exit_code_str, "stdout": stdout_content, "stderr": stderr_content}
+                preview_url_val = f"http://localhost:{app_port}" # Construct hypothetical URL
+
+                if "timed out" in run_output_str.lower(): # Expected for servers
+                    await _send_status_update(project_id, "EXECUTION_APP_RUN_SIMULATED",
+                                              f"App started (simulated by timeout of: {run_command}).",
+                                              preview_url=preview_url_val, exec_details=exec_details)
+                    _generated_apps[project_id]['preview_url'] = preview_url_val
+                elif "error" in stderr_content.lower() or (exit_code_str != "0" and exit_code_str != "N/A"): # Check stderr for errors too
+                     raise ToolError("execute_code_tool", f"App '{run_command}' failed on startup. Exit: {exit_code_str}. Stderr: {stderr_content[:100]}")
                 else:
-                     await _send_status_update(project_id, "EXECUTION_APP_RUN_CHECKED", f"App run command '{run_command}' executed. Output: {run_output[:200]}", preview_url=preview_url_val)
+                     await _send_status_update(project_id, "EXECUTION_APP_RUN_CHECKED",
+                                              f"App command '{run_command}' executed. Output suggests it might have run briefly or is not a long-running server.",
+                                              preview_url=preview_url_val, exec_details=exec_details)
+                     _generated_apps[project_id]['preview_url'] = preview_url_val
             except ToolError as e:
-                _generated_apps[project_id]['logs'].append(f"Error running app: {e.message}")
-                await _send_status_update(project_id, "ERROR", f"Failed to run app '{run_command}'. Error: {e.message}", error_details=e.message)
+                _generated_apps[project_id]['logs'].append(f"App run error: {e.message}")
+                await _send_status_update(project_id, "ERROR", f"Failed to run app '{run_command}'. Error: {e.message}", exec_details={"command": run_command, "error": e.message})
+                # await _send_status_update(project_id, "ERROR", f"App run failed: {run_command}. LLM could try to debug.", ...)
                 return
         else:
             await _send_status_update(project_id, "EXECUTION_NO_RUN_COMMAND", "No run command identified.")
 
         await _send_status_update(project_id, "EXECUTION_PHASE_COMPLETE", "Execution phase finished.")
 
+    # ... (outer try-except for the whole flow) ...
     except ToolError as e:
-        error_msg = f"Tool error in appgen: {e.message}"
+        error_msg = f"Tool error in app gen: {e.message}"
         await _send_status_update(project_id, "ERROR", message=error_msg, error_details=str(e))
         if project_id in _generated_apps: _generated_apps[project_id]['error'] = error_msg
-    except Exception as e:
-        error_msg = f"Unexpected error in appgen: {type(e).__name__} - {e}"
+    except Exception as e: # General catch-all
+        # ... (existing general error handling) ...
+        error_msg = f"Unexpected error in app gen: {type(e).__name__} - {e}"
+        _generated_apps[project_id]['logs'].append(f"Conceptual: Unhandled exception in flow. Details: {type(e).__name__} - {e}")
         await _send_status_update(project_id, "ERROR", message=error_msg, error_details=str(e))
         if project_id in _generated_apps: _generated_apps[project_id]['error'] = error_msg
