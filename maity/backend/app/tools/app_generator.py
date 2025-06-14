@@ -86,7 +86,6 @@ async def generate_app_tool(prompt: str) -> str:
 
 
 def _get_all_filepaths_from_plan(file_structure: Dict[str, Any], current_path: Path = Path(".")) -> List[Path]:
-    """Helper to recursively get all file paths from the plan's file structure."""
     paths = []
     for name, content in file_structure.items():
         new_path = current_path / name
