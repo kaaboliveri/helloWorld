@@ -349,3 +349,144 @@
     color: #ff8a8a;
     font-style: italic;
 }
+
+/* App Generator View Styles */
+.appgen-view-container {
+  padding: 20px;
+  padding-top: 80px; /* Account for fixed header */
+  height: calc(100vh - 80px); /* Corrected from 60px to 80px based on padding-top */
+  overflow-y: auto;
+  color: #ECECEC;
+  max-width: 900px; /* Wider for app gen details */
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.appgen-view-container h2, .appgen-view-container h3 {
+  color: #ECECEC;
+  border-bottom: 1px solid #40414F;
+  padding-bottom: 10px;
+  margin-top: 0;
+}
+.appgen-view-container h3 {
+    margin-top: 20px;
+}
+
+
+.appgen-form-section {
+  background-color: #2c2d30;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.appgen-prompt-input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #40414F;
+  border-radius: 4px;
+  background-color: #40414F;
+  color: #ECECEC;
+  font-size: 1rem;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.appgen-submit-button {
+  background-color: #28a745; /* Green for generate */
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.appgen-submit-button:hover {
+  background-color: #218838;
+}
+.appgen-submit-button:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+}
+
+.appgen-error-message {
+  color: #dc3545;
+  background-color: rgba(220, 53, 69, 0.1);
+  border: 1px solid #dc3545;
+  padding: 10px;
+  border-radius: 4px;
+  margin-top: 15px;
+}
+
+.appgen-status-section {
+  background-color: #2c2d30;
+  padding: 20px;
+  border-radius: 8px;
+}
+
+.appgen-status-log {
+  background-color: #202123; /* Darker for log area */
+  padding: 15px;
+  border-radius: 5px;
+  min-height: 100px;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9em;
+  margin-bottom: 15px;
+  border: 1px solid #40414f; /* Added border for definition */
+}
+.log-entry {
+    padding: 4px 0; /* Increased padding */
+    border-bottom: 1px dotted #40414F;
+    line-height: 1.4; /* Improved readability */
+}
+.log-entry:last-child {
+    border-bottom: none;
+}
+.log-type-system strong { color: #8ab4f8; }
+.log-type-appgen_status strong { color: #fdd835; }
+/* Example for status-specific styling */
+.log-status-error strong { color: #ff6b6b; }
+.log-status-plan_complete strong { color: #4caf50; }
+
+
+.log-entry pre.error-details {
+    color: #ff8a8a;
+    background-color: #332020;
+    padding: 8px; /* Increased padding */
+    border-radius: 3px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 8px; /* Increased margin */
+    font-size: 0.85em; /* Slightly smaller for details */
+}
+
+
+.appgen-plan-display, .appgen-preview-url {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px dashed #40414F;
+}
+.appgen-plan-display h4, .appgen-preview-url h4 { /* Target h4 within these sections */
+    color: #b0b0b0; /* Consistent with other h4s in monitoring */
+    font-size: 1.1rem;
+    margin-bottom: 10px; /* Added margin */
+}
+.appgen-plan-display pre {
+  background-color: #202123;
+  padding: 10px;
+  border-radius: 4px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid #40414f; /* Added border */
+}
+.appgen-preview-url a {
+    color: #8ab4f8;
+    font-weight: bold;
+    text-decoration: underline;
+}

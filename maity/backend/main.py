@@ -3,8 +3,8 @@ import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from pydantic import BaseModel, Field # Import BaseModel and Field for request body
-from typing import Optional, List # For type hinting
+from pydantic import BaseModel, Field
+from typing import Optional, List
 
 # Existing imports
 from backend.app.agents import get_maity_agent, MaityAgent
@@ -21,7 +21,10 @@ from backend.app.tools.monitoring import (
 # Import task management functions directly for listing/getting results
 from backend.app.tasks import list_monitoring_tasks, get_monitoring_results
 
-from openai_agents.tool import ToolError # To catch errors from tools
+from openai_agents.tool import ToolError
+# App Generator imports
+from backend.app.tools.app_generator import active_appgen_websockets, generate_app_tool as generate_app_tool_action
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -116,10 +119,15 @@ class MonitorSetupRequest(BaseModel):
     frequency_hours: int = Field(default=24, gt=0, description="Frequency in hours (must be > 0)")
 
 
+# --- Pydantic Model for App Generation Request ---
+class AppGenPromptRequest(BaseModel):
+    prompt: str
+
+
 # --- Monitoring API Endpoints ---
 
-@app.post("/api/monitor/setup", summary="Set up a new monitoring task", status_code=201) # Added status_code
-async def setup_new_monitoring_task_endpoint(request_data: MonitorSetupRequest): # Renamed for clarity
+@app.post("/api/monitor/setup", summary="Set up a new monitoring task", status_code=201)
+async def setup_new_monitoring_task_endpoint(request_data: MonitorSetupRequest):
     """
     Configures a new automated monitoring task.
     """
@@ -177,5 +185,57 @@ async def root():
     return {"message": "Welcome to the Maity AI Agent Backend!"}
 
 # (Comment out or remove unused appgen endpoints if not being developed due to blockages)
-# @app.post("/api/app/generate") ...
-# @app.websocket("/ws/appgen/{project_id}") ...
+
+# --- App Generation API Endpoints ---
+
+@app.post("/api/app/generate", summary="Start a new app generation task")
+async def start_app_generation(request_data: AppGenPromptRequest):
+    if not request_data.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+    try:
+        result_message = await generate_app_tool_action(prompt=request_data.prompt)
+        project_id = None
+        # Example result_message: "App generation started with Project ID: abc123xyz. Path: /app/maity_sandbox/appgen_abc123xyz."
+        parts = result_message.split("Project ID: ")
+        if len(parts) > 1:
+            project_id_part = parts[1].split(".")[0] # Takes part after "Project ID: " and before first "."
+            project_id = project_id_part.strip()
+
+        if not project_id: # Fallback or error if parsing fails
+            print(f"Error: Could not reliably extract project_id from response: {result_message}")
+            # Attempt a more general extraction if specific parsing fails
+            id_match = Query("Project ID: ([a-zA-Z0-9_-]+)").search(result_message) # Regex import needed for Query
+            if id_match:
+                project_id = id_match.group(1)
+            else:
+                raise HTTPException(status_code=500, detail="Failed to start task or determine project ID from tool response.")
+
+        return {"project_id": project_id, "initial_message": result_message}
+    except ToolError as e:
+        raise HTTPException(status_code=400, detail=f"Tool Error: {e.message}")
+    except Exception as e:
+        print(f"Error starting app generation: {type(e).__name__} - {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.websocket("/ws/appgen/{project_id}")
+async def websocket_appgen_status(websocket: WebSocket, project_id: str):
+    await websocket.accept()
+    print(f"AppGen WebSocket connection established for project: {project_id}")
+    active_appgen_websockets[project_id].append(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text() # Keep connection open
+            print(f"Received on /ws/appgen/{project_id}: {data} (ignoring)")
+            # This endpoint is primarily for sending updates from server to client.
+            # Client messages could trigger actions if needed, e.g., cancel task.
+    except WebSocketDisconnect:
+        print(f"AppGen WebSocket disconnected for project: {project_id}")
+    except Exception as e:
+        print(f"Error in AppGen WebSocket for {project_id}: {type(e).__name__} - {e}")
+    finally:
+        if websocket in active_appgen_websockets.get(project_id, []):
+            active_appgen_websockets[project_id].remove(websocket)
+        if not active_appgen_websockets.get(project_id): # Check if list is empty
+            if project_id in active_appgen_websockets: # Check if key exists before del
+                del active_appgen_websockets[project_id]
+        print(f"AppGen WebSocket for {project_id} cleaned up for project: {project_id}.")
