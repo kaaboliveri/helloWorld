@@ -1,15 +1,13 @@
 // In maity/frontend/src/components/MessageList.js
-import React, { useState } from 'react'; // Added useState for copy button state
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
-// Assuming styles and languages are already imported as they were for code block rendering step
 import { jsx, javascript, python, css, shell, sql, yaml, json, markdown as mdLang } from 'react-syntax-highlighter/dist/esm/languages/prism';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import './MessageList.css';
 
-// Register languages (ensure this is done, can be outside component if module-level)
 SyntaxHighlighter.registerLanguage('jsx', jsx);
 SyntaxHighlighter.registerLanguage('javascript', javascript);
 SyntaxHighlighter.registerLanguage('js', javascript);
@@ -24,31 +22,24 @@ SyntaxHighlighter.registerLanguage('json', json);
 SyntaxHighlighter.registerLanguage('markdown', mdLang);
 SyntaxHighlighter.registerLanguage('md', mdLang);
 
-
-// Define CodeBlock component separately to manage its own state for "Copied" message
 const CodeBlockWithCopy = ({ language, codeString, inline, className, children, ...props }) => {
     const [isCopied, setIsCopied] = useState(false);
 
     const handleCopy = () => {
         navigator.clipboard.writeText(codeString).then(() => {
             setIsCopied(true);
-            setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
+            setTimeout(() => setIsCopied(false), 2000);
         }, (err) => {
-            console.error('Failed to copy code: ', err);
-            // Optionally, provide error feedback to user, e.g., set another state variable
+            console.warn('Failed to copy code to clipboard:', err); // Updated error handling
         });
     };
 
-    if (inline) { // Handle inline code - no copy button for inline
+    if (inline) {
         return <code className="inline-code" {...props}>{children}</code>;
     }
 
     const detectedLanguage = language || 'plaintext';
 
-    // Fallback for code blocks without a determined language class (e.g., ```text``` or just ```code```)
-    // or if SyntaxHighlighter shouldn't be used for very simple plaintext.
-    // This condition means: if the language is 'plaintext' AND it's a single line of code.
-    // If it's multiline plaintext, it will still go to SyntaxHighlighter to get line numbers if enabled.
     if (detectedLanguage === 'plaintext' && codeString.split('\n').length <= 1 && !className?.includes('language-')) {
          return (
             <div className="code-block-wrapper fallback-wrapper">
@@ -70,7 +61,7 @@ const CodeBlockWithCopy = ({ language, codeString, inline, className, children, 
             </div>
             <SyntaxHighlighter
                 style={vscDarkPlus}
-                language={detectedLanguage} // Use detectedLanguage which defaults to 'plaintext' if needed
+                language={detectedLanguage}
                 PreTag="div"
                 showLineNumbers={detectedLanguage !== 'plaintext' && codeString.split('\n').length > 1}
                 wrapLines={true}
@@ -84,7 +75,6 @@ const CodeBlockWithCopy = ({ language, codeString, inline, className, children, 
     );
 };
 
-
 const MessageList = ({ messages }) => {
   if (!messages || messages.length === 0) {
     return <div className="message-list-empty">No messages yet. Start chatting!</div>;
@@ -93,22 +83,22 @@ const MessageList = ({ messages }) => {
   const markdownComponents = {
     code({ node, inline, className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '');
-      // language will be null if no match (e.g. ```text``` or just ```), defaults to 'plaintext' in CodeBlockWithCopy
       const language = match && match[1] ? match[1] : null;
       const codeString = String(children).replace(/\n$/, '');
 
       return (
         <CodeBlockWithCopy
-          language={language} // Pass potentially null language
+          language={language}
           codeString={codeString}
           inline={inline}
-          className={className} // Pass original className for fallback pre/code if needed
+          className={className}
           {...props}
         >
           {children}
         </CodeBlockWithCopy>
       );
-    }
+    },
+    a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" /> // Added link renderer
   };
 
   const renderContent = (text, sender) => {

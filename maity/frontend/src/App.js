@@ -6,7 +6,7 @@ import MessageInput from './components/MessageInput';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-let messageIdCounter = 2; // Initial messages count + 1 for chat
+let messageIdCounter = 2;
 const BACKEND_WS_URL = process.env.REACT_APP_BACKEND_WS_URL || 'ws://localhost:8000/ws/chat';
 const BACKEND_API_URL = process.env.REACT_APP_BACKEND_API_URL || 'http://localhost:8000/api';
 
@@ -50,6 +50,7 @@ function App() {
   const [currentView, setCurrentView] = useState('chat');
 
   useEffect(() => {
+    setError(null);
     if (currentView === 'chat' && conversationId) {
       localStorage.setItem('maityConversationId', conversationId);
       const wsUrl = `${BACKEND_WS_URL}/${conversationId}`;
@@ -127,12 +128,11 @@ function App() {
           if (data.preview_url) setGeneratedAppPreviewUrl(data.preview_url);
           if (data.status === "ERROR") {
             setAppGenError(data.message || "An error occurred during app generation.");
-            setIsGeneratingApp(false); // Stop loading on error
+            // setIsGeneratingApp(false); // Only stop on specific final error or success
           }
-          // Example final statuses that might indicate generation is no longer "in progress"
-          const finalStatuses = ["EXECUTION_COMPLETE", "PLANNING_SUCCESSFUL_PENDING_CODEGEN", "CODE_GENERATION_ALL_FILES_ATTEMPTED", "ERROR", "CODE_GENERATION_SKIPPED"];
+          const finalStatuses = ["EXECUTION_PHASE_COMPLETE", "EXECUTION_SKIPPED", "ERROR", "PLANNING_SUCCESSFUL_PENDING_CODEGEN"];
           if (finalStatuses.includes(data.status)) {
-             // setIsGeneratingApp(false); // Re-evaluate if this should be here or based on explicit "completed" type message
+             setIsGeneratingApp(false);
           }
         } catch (e) {
           console.error("Error processing AppGen status:", e);
@@ -144,14 +144,14 @@ function App() {
         console.error("AppGen WebSocket error:", err);
         setAppGenError('AppGen WebSocket connection error.');
         setIsAppGenWsConnected(false);
-        setIsGeneratingApp(false); // Stop loading on WS error
+        setIsGeneratingApp(false);
         setAppGenStatusLog(prev => [...prev, {type: 'system', status: 'WS_ERROR', message: 'WebSocket connection error.'}]);
       };
 
       appGenWebSocket.current.onclose = (event) => {
         console.log(`AppGen WebSocket disconnected (Project: ${appGenProjectId}, Code: ${event.code}, Reason: ${event.reason})`);
         setIsAppGenWsConnected(false);
-        // setIsGeneratingApp(false); // Don't automatically stop generation if WS closes unexpectedly, might reconnect or it's still running
+        // setIsGeneratingApp(false); // Don't stop if it might be a temporary disconnect and process is running
         if(!event.wasClean && appGenProjectId) {
              setAppGenStatusLog(prev => [...prev, {type: 'system', status: 'DISCONNECTED', message: 'Status stream disconnected.'}]);
         }
@@ -176,7 +176,6 @@ function App() {
   };
   useEffect(() => { const el = document.querySelector('.message-list'); if (el) el.scrollTop = el.scrollHeight; }, [messages]);
   useEffect(() => { const el = document.querySelector('.appgen-status-log'); if (el) el.scrollTop = el.scrollHeight; }, [appGenStatusLog]);
-
 
   const handleNewChat = () => {
     if (chatWebSocket.current && chatWebSocket.current.readyState === WebSocket.OPEN) chatWebSocket.current.close();
@@ -213,20 +212,52 @@ function App() {
     finally { setIsSubmittingMonitor(false); }
   };
 
-  const fetchActiveMonitorTasks = async () => { /* ... as before ... */ };
-  const fetchTaskResults = async (taskId) => { /* ... as before ... */ };
+  const fetchActiveMonitorTasks = async () => {
+    setIsLoadingTasks(true); setMonitoringViewError(''); setActiveMonitorTasks([]); setSelectedTaskResults(null);
+    try {
+      const response = await axios.get(`${BACKEND_API_URL}/monitor/tasks`);
+      setActiveMonitorTasks(response.data || []);
+    } catch (err) {
+      setMonitoringViewError('Failed to fetch active monitoring tasks.'); console.error("Error fetching tasks:", err);
+    } finally { setIsLoadingTasks(false); }
+   };
+  const fetchTaskResults = async (taskId) => {
+    setIsLoadingResults(true); setMonitoringViewError(''); setSelectedTaskResults({ taskId, results: [], message: "Loading..." });
+    try {
+      const response = await axios.get(`${BACKEND_API_URL}/monitor/results/${taskId}`);
+      if (Array.isArray(response.data)) {
+        setSelectedTaskResults({ taskId, results: response.data, message: response.data.length === 0 ? "No results found for this task yet." : "" });
+      } else {
+         setSelectedTaskResults({ taskId, results: [], message: "Received unexpected data format for results."});
+      }
+    } catch (err) {
+      let errorMsg = `Failed to fetch results for task ${taskId}.`;
+      if (err.response && err.response.data && err.response.data.detail) errorMsg = `Error: ${err.response.data.detail}`;
+      setMonitoringViewError(errorMsg);
+      setSelectedTaskResults({ taskId, results: [], message: errorMsg, isError: true });
+      console.error(`Error fetching results for task ${taskId}:`, err);
+    } finally { setIsLoadingResults(false); }
+  };
   useEffect(() => { if (currentView === 'monitoring') fetchActiveMonitorTasks(); }, [currentView]);
 
   const handleGenerateApp = async () => {
     if (!appGenPrompt.trim()) { setAppGenError("Please enter a prompt for your application."); return; }
-    setIsGeneratingApp(true); setAppGenError(''); setAppGenStatusLog([]); setGeneratedAppPlan(null); setGeneratedAppPreviewUrl(null); setAppGenProjectId(null); // Reset project ID to allow new generation
+    setIsGeneratingApp(true); setAppGenError('');
+    setAppGenStatusLog([{type: 'system', status: 'INITIATING', message: 'Starting app generation process...'}]); // Initial log
+    setGeneratedAppPlan(null); setGeneratedAppPreviewUrl(null);
+
+    // Reset project ID only if starting a truly new generation from scratch
+    // If there was a previous error and user retries with same prompt, might reuse ID if backend supports it.
+    // For now, always generate new ID on new click.
+    setAppGenProjectId(null);
     if (appGenWebSocket.current) appGenWebSocket.current.close();
 
     try {
       const response = await axios.post(`${BACKEND_API_URL}/app/generate`, { prompt: appGenPrompt });
       if (response.data && response.data.project_id) {
-        setAppGenStatusLog([{type: 'system', status: 'INITIATED', message: `App generation started. ${response.data.initial_message}`}]);
-        setAppGenProjectId(response.data.project_id); // This triggers useEffect for WebSocket
+        // Prepend to existing logs, or set if it was just the initiating message
+        setAppGenStatusLog(prev => [{type: 'system', status: 'REQUEST_SENT', message: `App generation request sent. ${response.data.initial_message}`}, ...prev.filter(p => p.status !== 'INITIATING')]);
+        setAppGenProjectId(response.data.project_id);
       } else { throw new Error("Backend did not return a project_id."); }
     } catch (err) {
       let errorMsg = 'Failed to start app generation.';
@@ -234,6 +265,7 @@ function App() {
       else if (err.message) errorMsg = `Error: ${err.message}`;
       setAppGenError(errorMsg); console.error("Error starting app generation:", err);
       setIsGeneratingApp(false);
+      setAppGenStatusLog(prev => [...prev, {type: 'system', status: 'ERROR', message: errorMsg}]);
     }
   };
 
@@ -248,7 +280,7 @@ function App() {
       </div>
     </div>
   );
-  const renderMonitoringView = () => ( /* ... as before, ensure all states are defined ... */
+  const renderMonitoringView = () => (
       <div className="monitoring-view-container">
           <div className="monitor-section">
             <h2>Setup New Monitoring Task</h2>
@@ -294,15 +326,54 @@ function App() {
       {appGenProjectId && (
         <div className="appgen-status-section">
           <h3>Generation Status (Project ID: {appGenProjectId})</h3>
-          {!isAppGenWsConnected && appGenProjectId && !appGenError && <p className="connection-indicator">Connecting to status stream...</p>}
+          {!isAppGenWsConnected && appGenProjectId && !appGenError && <p className="connection-status-indicator">Connecting to status stream...</p>}
+          {isAppGenWsConnected && <p className="connection-status-indicator success">Connected to status stream.</p>}
+
           <div className="appgen-status-log">
-            {appGenStatusLog.map((logEntry, index) => (
-              <div key={index} className={`log-entry log-type-${logEntry.type || 'status'} log-status-${logEntry.status?.toLowerCase() || 'unknown'}`}>
-                <strong>{logEntry.status || logEntry.type?.toUpperCase()}:</strong> {logEntry.message}
-                {logEntry.current_file && ` (File: ${logEntry.current_file})`}
-                {logEntry.error_details && <pre className="error-details">{logEntry.error_details}</pre>}
-              </div>
-            ))}
+            {appGenStatusLog.map((logEntry, index) => {
+              const status = logEntry.status || logEntry.type || "INFO";
+              const message = logEntry.message || "No message";
+              const execDetails = logEntry.exec_details;
+              const errorDetails = logEntry.error_details;
+
+              return (
+                <div key={index} className={`log-entry log-status-${status.toLowerCase().replace(/_/g, '-')}`}>
+                  <span className="log-status-badge">{status}</span>
+                  <span className="log-message">{message}</span>
+                  {logEntry.current_file && <span className="log-detail"> (File: {logEntry.current_file})</span>}
+                  {(logEntry.files_completed !== undefined && logEntry.files_total) &&
+                    <span className="log-detail"> (Progress: {logEntry.files_completed}/{logEntry.files_total})</span>}
+
+                  {execDetails && (
+                    <div className="exec-details">
+                      {execDetails.command && <pre className="exec-command">$ {execDetails.command}</pre>}
+                      {execDetails.exit_code !== undefined && <p className="exec-exit-code">Exit Code: {execDetails.exit_code}</p>}
+                      {execDetails.stdout && execDetails.stdout.trim() && execDetails.stdout.trim() !== "(empty)" && (
+                        <details className="exec-stdout-details">
+                          <summary>STDOUT</summary>
+                          <pre className="exec-output stdout">{execDetails.stdout}</pre>
+                        </details>
+                      )}
+                      {execDetails.stderr && execDetails.stderr.trim() && execDetails.stderr.trim() !== "(empty)" && (
+                         <details className="exec-stderr-details" open>
+                          <summary>STDERR</summary>
+                          <pre className="exec-output stderr">{execDetails.stderr}</pre>
+                        </details>
+                      )}
+                      {typeof execDetails.error === 'string' && execDetails.error && (
+                        <pre className="exec-output stderr">Tool Error: {execDetails.error}</pre>
+                      )}
+                    </div>
+                  )}
+                  {errorDetails && (typeof errorDetails === 'string') && (
+                    <details className="error-details-display" open>
+                        <summary>Error Details</summary>
+                        <pre className="error-details-pre">{errorDetails}</pre>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
           </div>
           {generatedAppPlan && (
             <div className="appgen-plan-display"><h4>Generated Plan:</h4><p><strong>Stack:</strong> {JSON.stringify(generatedAppPlan.stack)}</p><p><strong>Components:</strong> {generatedAppPlan.components_description}</p><p><strong>Data Models:</strong> {generatedAppPlan.data_models_description}</p><p><strong>Files:</strong></p><pre>{JSON.stringify(generatedAppPlan.files, null, 2)}</pre></div>

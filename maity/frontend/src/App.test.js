@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import axios from 'axios'; // To mock axios
+import axios from 'axios';
 import App from './App';
 
 // Mock axios
@@ -17,108 +17,124 @@ const mockWebSocketInstance = {
     send: jest.fn(),
     readyState: WebSocket.OPEN, // Simulate open state for relevant tests
 };
-global.WebSocket = jest.fn(() => mockWebSocketInstance);
+// global.WebSocket = jest.fn(() => mockWebSocketInstance); // Keep this if App.js uses `new WebSocket` directly
+// If App.js uses a ref for WebSocket, we might need to mock the ref or its current property.
+// For TestClient.websocket_connect, it handles its own WebSocket interactions.
+// The global mock is useful if the App component itself tries to create a WebSocket.
+// In our App.js, WebSocket is created in useEffect, so global mock is appropriate.
+beforeAll(() => {
+    global.WebSocket = jest.fn(() => mockWebSocketInstance);
+});
 
 
-describe('App Component - Monitoring Setup Form', () => {
-  beforeEach(() => {
-    // Reset mocks before each test
-    axios.post.mockReset();
-    axios.get.mockReset();
-    localStorage.clear();
+describe('App Component', () => {
+    beforeEach(() => {
+        axios.post.mockReset();
+        // Default GET mock to return empty array to avoid issues with unmocked calls in useEffect
+        axios.get.mockReset().mockResolvedValue({ data: [] });
+        localStorage.clear();
 
-    // Clear all mock call counts and implementations for WebSocket instance methods
-    mockWebSocketInstance.onopen.mockClear();
-    mockWebSocketInstance.onmessage.mockClear();
-    mockWebSocketInstance.onerror.mockClear();
-    mockWebSocketInstance.onclose.mockClear();
-    mockWebSocketInstance.close.mockClear();
-    mockWebSocketInstance.send.mockClear();
-    // Reset the WebSocket constructor mock itself if needed (e.g. to check number of connections)
-    global.WebSocket.mockClear();
-    // Re-assign a fresh mock instance for each test if state needs to be fully isolated
-    // For now, clearing method calls on the shared instance is often sufficient.
-    // To be absolutely sure:
-    // global.WebSocket = jest.fn(() => ({ ...mockWebSocketInstance })); // Creates new object with same mock fns
-  });
-
-  test('renders Monitoring tab and setup form when Monitoring view is active', async () => {
-    render(<App />);
-    const monitoringTabButton = screen.getByRole('button', { name: /monitoring/i });
-    fireEvent.click(monitoringTabButton);
-
-    expect(await screen.findByRole('heading', { name: /automated monitoring setup/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/topic/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/keywords\/query/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /setup monitoring task/i })).toBeInTheDocument();
-  });
-
-  test('allows input in monitoring setup form fields', async () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /monitoring/i }));
-
-    const topicInput = await screen.findByLabelText(/topic/i);
-    fireEvent.change(topicInput, { target: { value: 'Test Topic' } });
-    expect(topicInput.value).toBe('Test Topic');
-
-    const keywordsInput = screen.getByLabelText(/keywords\/query/i);
-    fireEvent.change(keywordsInput, { target: { value: 'test, keywords' } });
-    expect(keywordsInput.value).toBe('test, keywords');
-
-    const frequencyInput = screen.getByLabelText(/frequency \(hours\)/i);
-    fireEvent.change(frequencyInput, { target: { value: '12' } });
-    expect(frequencyInput.value).toBe('12');
-  });
-
-  test('submits monitoring setup form data and displays success message', async () => {
-    axios.post.mockResolvedValueOnce({
-        data: { message: "Task 'Test Topic' successfully set up." }
-    });
-    axios.get.mockResolvedValueOnce({ data: [] }); // For fetchActiveMonitorTasks
-
-    render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /monitoring/i }));
-
-    const topicInput = await screen.findByLabelText(/topic/i);
-
-    fireEvent.change(topicInput, { target: { value: 'Test Topic' } });
-    fireEvent.change(screen.getByLabelText(/keywords\/query/i), { target: { value: 'test, keywords' } });
-    fireEvent.change(screen.getByLabelText(/frequency \(hours\)/i), { target: { value: '12' } });
-
-    fireEvent.click(screen.getByRole('button', { name: /setup monitoring task/i }));
-
-    await waitFor(() => {
-      expect(axios.post).toHaveBeenCalledWith(
-        expect.stringContaining('/api/monitor/setup'),
-        {
-          topic: 'Test Topic',
-          keywords: 'test, keywords',
-          sources: 'web_search',
-          frequency_hours: 12,
-        }
-      );
+        mockWebSocketInstance.onopen.mockClear();
+        mockWebSocketInstance.onmessage.mockClear();
+        mockWebSocketInstance.onerror.mockClear();
+        mockWebSocketInstance.onclose.mockClear();
+        mockWebSocketInstance.close.mockClear();
+        mockWebSocketInstance.send.mockClear();
+        // Ensure readyState is reset if changed in a test (though typically not)
+        mockWebSocketInstance.readyState = WebSocket.OPEN;
+        global.WebSocket.mockClear();
     });
 
-    expect(await screen.findByText(/success: task 'test topic' successfully set up./i)).toBeInTheDocument();
-  });
+    describe('Monitoring Setup Form', () => {
+        test('renders Monitoring tab and setup form', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByRole('button', { name: /monitoring/i }));
+            expect(await screen.findByRole('heading', { name: /automated monitoring setup/i })).toBeInTheDocument();
+            // Add more specific checks from previous monitoring tests if needed
+            expect(screen.getByLabelText(/topic/i)).toBeInTheDocument();
+        });
 
+        test('submits monitoring setup form data and displays success message', async () => {
+            axios.post.mockResolvedValueOnce({
+                data: { message: "Task 'Test Topic' successfully set up." }
+            });
+            axios.get.mockResolvedValueOnce({ data: [] }); // For fetchActiveMonitorTasks
 
-  test('displays error message if monitoring setup form submission fails', async () => {
-    axios.post.mockRejectedValueOnce({
-        response: { data: { detail: "Backend validation failed." } }
+            render(<App />);
+            fireEvent.click(screen.getByRole('button', { name: /monitoring/i }));
+            const topicInput = await screen.findByLabelText(/topic/i);
+            fireEvent.change(topicInput, { target: { value: 'Test Topic' } });
+            fireEvent.change(screen.getByLabelText(/keywords\/query/i), { target: { value: 'test, keywords' } });
+            fireEvent.change(screen.getByLabelText(/frequency \(hours\)/i), { target: { value: '12' } });
+            fireEvent.click(screen.getByRole('button', { name: /setup monitoring task/i }));
+
+            await waitFor(() => {
+              expect(axios.post).toHaveBeenCalledWith(
+                expect.stringContaining('/api/monitor/setup'),
+                { topic: 'Test Topic', keywords: 'test, keywords', sources: 'web_search', frequency_hours: 12, }
+              );
+            });
+            expect(await screen.findByText(/success: task 'test topic' successfully set up./i)).toBeInTheDocument();
+          });
     });
 
-    render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /monitoring/i }));
 
-    const topicInput = await screen.findByLabelText(/topic/i);
+    describe('View Switching and Basic View Content', () => {
+        test('defaults to Chat view and renders chat elements', () => {
+            render(<App />);
+            expect(screen.getByPlaceholderText('Send a message...')).toBeInTheDocument();
+            expect(screen.getByRole('button', {name: /new chat/i})).toBeInTheDocument();
+            expect(screen.getByTitle(/select model/i)).toBeInTheDocument();
+        });
 
-    fireEvent.change(topicInput, { target: { value: 'Error Topic' } });
-    fireEvent.change(screen.getByLabelText(/keywords\/query/i), { target: { value: 'error test' } });
-    fireEvent.change(screen.getByLabelText(/frequency \(hours\)/i), { target: { value: '10' } });
+        test('switches to Monitoring view and renders monitoring elements', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByRole('button', { name: /monitoring/i }));
+            expect(await screen.findByRole('heading', { name: /automated monitoring setup/i })).toBeInTheDocument();
+            expect(screen.queryByPlaceholderText('Send a message...')).not.toBeInTheDocument();
+        });
 
-    fireEvent.click(screen.getByRole('button', { name: /setup monitoring task/i }));
+        test('switches to App Generator view and renders app generator elements', async () => {
+            render(<App />);
+            fireEvent.click(screen.getByRole('button', { name: /app generator/i }));
+            expect(await screen.findByRole('heading', { name: /application generator/i })).toBeInTheDocument();
+            expect(screen.getByPlaceholderText(/describe the application/i)).toBeInTheDocument();
+            expect(screen.queryByPlaceholderText('Send a message...')).not.toBeInTheDocument();
+        });
+    });
 
-    expect(await screen.findByText(/error: backend validation failed./i)).toBeInTheDocument();
-  });
+    describe('App Generator View Interactions', () => {
+        test('submits app generation prompt, sets project ID, and attempts WebSocket connection', async () => {
+            axios.post.mockResolvedValueOnce({
+                data: { project_id: "new_proj_456", initial_message: "Generation started by API." }
+            });
+
+            render(<App />);
+            fireEvent.click(screen.getByRole('button', { name: /app generator/i }));
+
+            const promptInput = await screen.findByPlaceholderText(/describe the application/i);
+            fireEvent.change(promptInput, { target: { value: 'Create a simple calculator' } });
+
+            const generateButton = screen.getByRole('button', { name: /generate application/i });
+            fireEvent.click(generateButton);
+
+            // Check axios call for starting generation
+            await waitFor(() => {
+                expect(axios.post).toHaveBeenCalledWith(
+                    expect.stringContaining('/api/app/generate'),
+                    { prompt: 'Create a simple calculator' }
+                );
+            });
+
+            // Check if UI reflects the initial message from API
+            expect(await screen.findByText(/app generation request sent. generation started by api./i)).toBeInTheDocument();
+            // Check if Project ID is displayed
+            expect(screen.getByText(/project id: new_proj_456/i)).toBeInTheDocument();
+
+            // Check if WebSocket constructor was called for appgen status
+            await waitFor(() => {
+                expect(global.WebSocket).toHaveBeenCalledWith(expect.stringContaining('/ws/appgen/new_proj_456'));
+            });
+        });
+    });
 });

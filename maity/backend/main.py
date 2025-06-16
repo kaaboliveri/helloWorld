@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging # Added
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -7,34 +8,38 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 # Existing imports
+from backend.app import config # Added for config.LOG_LEVEL
 from backend.app.agents import get_maity_agent, MaityAgent
-from backend.app.tasks import scheduler, init_scheduler, shutdown_scheduler # list_monitoring_tasks, get_monitoring_results are here
-from backend.app.models import ChatRequest, ChatResponse # AppGenStatusUpdate removed as it's not used here
+from backend.app.tasks import scheduler, init_scheduler, shutdown_scheduler
+from backend.app.models import ChatRequest, ChatResponse
 from backend.app.tools.web_automation import close_browser
 
-# Import monitoring tools (functions that call task management)
 from backend.app.tools.monitoring import (
-    setup_monitoring_tool as setup_monitoring_tool_action, # Alias to avoid confusion with endpoint
-    # list_monitoring_tasks, # This is directly from tasks.py
-    # get_monitoring_results # This is directly from tasks.py
+    setup_monitoring_tool as setup_monitoring_tool_action,
 )
-# Import task management functions directly for listing/getting results
 from backend.app.tasks import list_monitoring_tasks, get_monitoring_results
-
 from openai_agents.tool import ToolError
-# App Generator imports
 from backend.app.tools.app_generator import active_appgen_websockets, generate_app_tool as generate_app_tool_action
+
+# Logging Configuration
+numeric_log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
+logging.basicConfig(
+    level=numeric_log_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Maity Backend starting up...")
+    logger.info("Maity Backend starting up...")
     init_scheduler()
     yield
-    print("Maity Backend shutting down...")
+    logger.info("Maity Backend shutting down...")
     shutdown_scheduler()
     await close_browser()
-    print("Cleanup complete.")
+    logger.info("Cleanup complete.")
 
 app = FastAPI(
     title="Maity AI Agent Backend",
@@ -52,12 +57,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Existing Chat Endpoints ---
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest): # Removed Depends(get_maity_agent) to match original instruction
+async def chat_endpoint(req: ChatRequest):
     if not req.message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-    agent_instance = await get_maity_agent(req.conversation_id) # conversation_id can be None
+    agent_instance = await get_maity_agent(req.conversation_id)
     try:
         response_data = await agent_instance.handle_message(
             message=req.message,
@@ -65,75 +69,65 @@ async def chat_endpoint(req: ChatRequest): # Removed Depends(get_maity_agent) to
         )
         return ChatResponse(**response_data)
     except Exception as e:
-        print(f"Unhandled exception in chat_endpoint: {type(e).__name__} - {e}")
+        logger.error(f"Unhandled exception in chat_endpoint: {type(e).__name__} - {e}", exc_info=True)
         return ChatResponse(
             content=f"An internal server error occurred: {str(e)}",
-            conversation_id=agent_instance.conversation_id if agent_instance else req.conversation_id, # Ensure conv_id is returned
+            conversation_id=agent_instance.conversation_id if agent_instance and hasattr(agent_instance, 'conversation_id') else req.conversation_id,
             error=True
         )
 
 @app.websocket("/ws/chat/{conversation_id}")
 async def websocket_chat_endpoint(websocket: WebSocket, conversation_id: str):
     await websocket.accept()
-    print(f"WebSocket connection established for conversation: {conversation_id}")
+    logger.info(f"WebSocket connection established for conversation: {conversation_id}")
     agent = await get_maity_agent(conversation_id)
     try:
         while True:
             data = await websocket.receive_text()
-            import json # Keep import local to this scope
+            import json
             try:
                 req_data = json.loads(data)
                 message = req_data.get("message")
-                config = req_data.get("config")
+                config_data = req_data.get("config")
                 if not message:
                     await websocket.send_text(json.dumps({"type": "error", "content": "Empty message received."}))
                     continue
                 await websocket.send_text(json.dumps({"type": "status", "content": "Agent processing..."}))
                 response_data = await agent.handle_message(
                     message=message,
-                    preferred_model=config.get("preferred_model") if config else None
+                    preferred_model=config_data.get("preferred_model") if config_data else None
                 )
                 await websocket.send_text(json.dumps({
-                    "type": "final_response", # Ensure this matches frontend expectation
+                    "type": "final_response",
                     "content": response_data["content"],
-                    "conversation_id": response_data["conversation_id"], # Send back conversation_id
+                    "conversation_id": response_data["conversation_id"],
                     "error": response_data["error"],
                     "debug_info": response_data.get("debug_info")
                 }))
             except json.JSONDecodeError:
+                 logger.warning("Invalid JSON received via WebSocket.", exc_info=True)
                  await websocket.send_text(json.dumps({"type": "error", "content": "Invalid JSON received."}))
             except Exception as e:
-                 print(f"Error in WebSocket handler for {conversation_id}: {type(e).__name__} - {e}")
+                 logger.error(f"Error in WebSocket handler for {conversation_id}: {type(e).__name__} - {e}", exc_info=True)
                  await websocket.send_text(json.dumps({"type": "error", "content": f"Server error: {str(e)}"}))
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected for conversation: {conversation_id}")
+        logger.info(f"WebSocket disconnected for conversation: {conversation_id}")
     except Exception as e:
-        print(f"Unexpected error in WebSocket connection for {conversation_id}: {type(e).__name__} - {e}")
-        # await websocket.close(code=1011) # Avoid closing if already closed or in error state
+        logger.error(f"Unexpected error in WebSocket connection for {conversation_id}: {type(e).__name__} - {e}", exc_info=True)
 
-# --- Pydantic Models for Monitoring API ---
 class MonitorSetupRequest(BaseModel):
     topic: str = Field(..., min_length=1, description="Descriptive name for the monitoring task")
     keywords: str = Field(..., min_length=1, description="Keywords or query for the search")
     sources: Optional[str] = "web_search"
     frequency_hours: int = Field(default=24, gt=0, description="Frequency in hours (must be > 0)")
 
-
-# --- Pydantic Model for App Generation Request ---
 class AppGenPromptRequest(BaseModel):
     prompt: str
 
-
-# --- Monitoring API Endpoints ---
-
 @app.post("/api/monitor/setup", summary="Set up a new monitoring task", status_code=201)
 async def setup_new_monitoring_task_endpoint(request_data: MonitorSetupRequest):
-    """
-    Configures a new automated monitoring task.
-    """
     try:
-        print(f"Received monitoring setup request: {request_data}")
-        # setup_monitoring_tool_action is the imported tool function which calls tasks.add_monitoring_task
+        logger.info(f"Received monitoring setup request: {request_data}")
         result_message = await setup_monitoring_tool_action(
             topic=request_data.topic,
             keywords=request_data.keywords,
@@ -141,101 +135,78 @@ async def setup_new_monitoring_task_endpoint(request_data: MonitorSetupRequest):
             frequency_hours=request_data.frequency_hours
         )
         return {"message": result_message}
-    except ToolError as e: # Catch errors specifically raised by the tool
+    except ToolError as e:
+        logger.warning(f"ToolError in monitoring setup: {e.message}")
         raise HTTPException(status_code=400, detail=f"Tool Error: {e.message}")
     except Exception as e:
-        print(f"Error setting up monitoring task: {type(e).__name__} - {e}")
+        logger.error(f"Error setting up monitoring task: {type(e).__name__} - {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/api/monitor/tasks", summary="List all active monitoring tasks")
-async def get_active_monitoring_tasks_endpoint(): # Renamed for clarity
-    """
-    Lists all currently scheduled monitoring tasks.
-    """
+async def get_active_monitoring_tasks_endpoint():
     try:
-        # list_monitoring_tasks is directly from tasks.py (sync)
         tasks = list_monitoring_tasks()
         return tasks
     except Exception as e:
-        print(f"Error listing monitoring tasks: {type(e).__name__} - {e}")
+        logger.error(f"Error listing monitoring tasks: {type(e).__name__} - {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/api/monitor/results/{task_id}", summary="Get latest results for a monitoring task")
-async def get_task_monitoring_results_endpoint(task_id: str): # Renamed for clarity
-    """
-    Retrieves the latest findings for a specific monitoring task ID.
-    """
+async def get_task_monitoring_results_endpoint(task_id: str):
     try:
-        # get_monitoring_results is directly from tasks.py (sync)
         results = get_monitoring_results(task_id)
-        # The placeholder in tasks.py returns a list.
-        # If it were to return None for a non-existent task_id:
-        # if results is None:
-        #     raise HTTPException(status_code=404, detail=f"Task ID '{task_id}' not found or no results yet.")
-        # For now, it will always return a list (possibly empty if no actual results are stored)
         return results
     except Exception as e:
-        print(f"Error getting monitoring results for task {task_id}: {type(e).__name__} - {e}")
+        logger.error(f"Error getting monitoring results for task {task_id}: {type(e).__name__} - {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-
-# --- Root Endpoint ---
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Maity AI Agent Backend!"}
-
-# (Comment out or remove unused appgen endpoints if not being developed due to blockages)
-
-# --- App Generation API Endpoints ---
 
 @app.post("/api/app/generate", summary="Start a new app generation task")
 async def start_app_generation(request_data: AppGenPromptRequest):
     if not request_data.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
     try:
+        logger.info(f"Starting app generation for prompt: '{request_data.prompt[:50]}...'")
         result_message = await generate_app_tool_action(prompt=request_data.prompt)
         project_id = None
-        # Example result_message: "App generation started with Project ID: abc123xyz. Path: /app/maity_sandbox/appgen_abc123xyz."
         parts = result_message.split("Project ID: ")
         if len(parts) > 1:
-            project_id_part = parts[1].split(".")[0] # Takes part after "Project ID: " and before first "."
+            project_id_part = parts[1].split(".")[0]
             project_id = project_id_part.strip()
 
-        if not project_id: # Fallback or error if parsing fails
-            print(f"Error: Could not reliably extract project_id from response: {result_message}")
-            # Attempt a more general extraction if specific parsing fails
-            id_match = Query("Project ID: ([a-zA-Z0-9_-]+)").search(result_message) # Regex import needed for Query
-            if id_match:
-                project_id = id_match.group(1)
-            else:
-                raise HTTPException(status_code=500, detail="Failed to start task or determine project ID from tool response.")
+        if not project_id:
+            logger.error(f"Could not reliably extract project_id from response: {result_message}")
+            # Removed Query based regex for project_id extraction as it was problematic
+            raise HTTPException(status_code=500, detail="Failed to start task or determine project ID from tool response.")
 
         return {"project_id": project_id, "initial_message": result_message}
     except ToolError as e:
+        logger.warning(f"ToolError in app generation: {e.message}")
         raise HTTPException(status_code=400, detail=f"Tool Error: {e.message}")
     except Exception as e:
-        print(f"Error starting app generation: {type(e).__name__} - {e}")
+        logger.error(f"Error starting app generation: {type(e).__name__} - {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.websocket("/ws/appgen/{project_id}")
 async def websocket_appgen_status(websocket: WebSocket, project_id: str):
     await websocket.accept()
-    print(f"AppGen WebSocket connection established for project: {project_id}")
+    logger.info(f"AppGen WebSocket connection established for project: {project_id}")
     active_appgen_websockets[project_id].append(websocket)
     try:
         while True:
-            data = await websocket.receive_text() # Keep connection open
-            print(f"Received on /ws/appgen/{project_id}: {data} (ignoring)")
-            # This endpoint is primarily for sending updates from server to client.
-            # Client messages could trigger actions if needed, e.g., cancel task.
+            data = await websocket.receive_text()
+            logger.debug(f"Received on /ws/appgen/{project_id}: {data} (ignoring)")
     except WebSocketDisconnect:
-        print(f"AppGen WebSocket disconnected for project: {project_id}")
+        logger.info(f"AppGen WebSocket disconnected for project: {project_id}")
     except Exception as e:
-        print(f"Error in AppGen WebSocket for {project_id}: {type(e).__name__} - {e}")
+        logger.error(f"Error in AppGen WebSocket for {project_id}: {type(e).__name__} - {e}", exc_info=True)
     finally:
         if websocket in active_appgen_websockets.get(project_id, []):
             active_appgen_websockets[project_id].remove(websocket)
-        if not active_appgen_websockets.get(project_id): # Check if list is empty
-            if project_id in active_appgen_websockets: # Check if key exists before del
+        if not active_appgen_websockets.get(project_id):
+            if project_id in active_appgen_websockets:
                 del active_appgen_websockets[project_id]
-        print(f"AppGen WebSocket for {project_id} cleaned up for project: {project_id}.")
+        logger.info(f"AppGen WebSocket for {project_id} cleaned up.")

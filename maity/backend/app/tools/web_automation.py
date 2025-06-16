@@ -1,10 +1,12 @@
 import asyncio
 from openai_agents.tool import tool, ToolError
 from playwright.async_api import async_playwright
+import logging # Added
 # Import necessary LLM client functions and ModelType
-from ..llm_clients import direct_llm_call, ModelType, get_model_configuration # Ensure get_model_configuration is also available if needed for specific params
+from ..llm_clients import direct_llm_call, ModelType, get_model_configuration
 
-# (Keep existing _playwright, _browser, get_browser, close_browser, web_search_tool functions as they are)
+logger = logging.getLogger(__name__) # Added
+
 _playwright = None
 _browser = None
 
@@ -26,7 +28,7 @@ async def close_browser():
 
 @tool("Performs a web search using DuckDuckGo and returns relevant results.")
 async def web_search_tool(query: str) -> str:
-    print(f"Executing web_search_tool with query: {query}")
+    logger.info(f"Executing web_search_tool with query: '{query}'")
     browser = await get_browser()
     page = await browser.new_page()
     results = []
@@ -43,14 +45,14 @@ async def web_search_tool(query: str) -> str:
             results.append(f"Result {i+1}:\nTitle: {title}\nURL: {url}\nSnippet: {snippet}\n---")
         return "\n".join(results) if results else "No search results found."
     except Exception as e:
-        print(f"Error during web search: {e}")
-        raise ToolError(tool_name="web_search_tool", message=f"Failed to perform search: {e}")
+        logger.error(f"Error during web search for query '{query}': {e}", exc_info=True)
+        raise ToolError(tool_name="web_search_tool", message=f"Failed to perform search: {str(e)}")
     finally:
-        await page.close()
+        if page and not page.is_closed(): await page.close()
 
 @tool("Navigates to a URL and extracts information or performs actions based on a task description.")
 async def browse_website_tool(url: str, task_description: str) -> str:
-    print(f"Executing browse_website_tool for URL: {url} with task: {task_description}")
+    logger.info(f"Executing browse_website_tool for URL: '{url}' with task: '{task_description}'")
 
     browser = await get_browser()
     page = await browser.new_page()
@@ -64,14 +66,13 @@ async def browse_website_tool(url: str, task_description: str) -> str:
             page_text = await page.evaluate('''() => {
                 const main = document.querySelector('main article, article, main, [role="main"]');
                 if (main) return main.innerText;
-                return document.body.innerText; // Fallback to full body text
+                return document.body.innerText;
             }''')
         except Exception as e:
-            print(f"Could not extract main text via JS, falling back to body text. Error: {e}")
+            logger.warning(f"Could not extract main text via JS for URL '{url}', falling back to body text. Error: {e}", exc_info=True)
             page_text = await page.locator('body').inner_text(timeout=10000)
 
-
-        # Limit text length to avoid excessive token usage for the LLM call
+        # Limit text length
         # PRD mentioned Claude 3.7 Sonnet has 200K context, Gemini 2.5 Pro up to 8M (or 1M for text)
         # Let's pick a reasonable limit for now, e.g. 50k characters, which is roughly 10k-15k tokens.
         max_len = 50000
@@ -102,10 +103,9 @@ async def browse_website_tool(url: str, task_description: str) -> str:
             """}
         ]
 
-        print(f"Sending content from {url} to LLM ({processing_model_id}) for task: {task_description}")
+        logger.info(f"Sending content from '{url}' to LLM ({processing_model_id}) for task: '{task_description}'")
 
         try:
-            # Get model-specific parameters if any (e.g., thinking budget for Claude)
             model_config = get_model_configuration(processing_model_id)
             llm_params = model_config.get("default_params", {})
 
@@ -122,28 +122,26 @@ async def browse_website_tool(url: str, task_description: str) -> str:
             extracted_info = await direct_llm_call(
                 messages=llm_prompt_messages,
                 model_id=processing_model_id,
-                **llm_params # Pass model specific params
+                **llm_params
             )
 
-            # Log first 100 chars of extracted_info
-            print(f"LLM response for browse_website_tool: {extracted_info[:100] if extracted_info else 'Empty response'}...")
+            logger.info(f"LLM response for browse_website_tool (URL: '{url}', first 100 chars): {extracted_info[:100] if extracted_info else 'Empty response'}...")
 
-
-            if not extracted_info or not extracted_info.strip(): # Check for None or empty string
+            if not extracted_info or not extracted_info.strip():
+                 logger.warning(f"LLM returned empty response for URL '{url}' and task '{task_description}'.")
                  return f"Successfully navigated to {url} and an LLM processed its content for task '{task_description}', but the LLM returned an empty response."
 
             return f"Analysis of {url} for task '{task_description}':\n{extracted_info}"
 
         except Exception as llm_error:
-            print(f"Error during LLM call in browse_website_tool: {llm_error}")
-            raise ToolError(tool_name="browse_website_tool", message=f"Failed to process content from {url} using LLM: {llm_error}")
+            logger.error(f"Error during LLM call in browse_website_tool for URL '{url}': {llm_error}", exc_info=True)
+            raise ToolError(tool_name="browse_website_tool", message=f"Failed to process content from {url} using LLM: {str(llm_error)}")
 
     except Exception as e:
-        print(f"Error during website browse for {url}: {e}")
-        # Check for specific Playwright errors if possible
-        if "net::ERR_NAME_NOT_RESOLVED" in str(e) or "Timeout" in str(e): # Simplified check
-             raise ToolError(tool_name="browse_website_tool", message=f"Failed to navigate to {url}. It might be unreachable or invalid.")
-        raise ToolError(tool_name="browse_website_tool", message=f"Failed to browse or process {url}: {e}")
+        logger.error(f"Error during website browse for URL '{url}': {e}", exc_info=True)
+        if "net::ERR_NAME_NOT_RESOLVED" in str(e) or "Timeout" in str(e):
+             raise ToolError(tool_name="browse_website_tool", message=f"Failed to navigate to {url}. It might be unreachable, invalid, or timed out.")
+        raise ToolError(tool_name="browse_website_tool", message=f"Failed to browse or process {url}: {str(e)}")
     finally:
-        if page and not page.is_closed(): # Ensure page is not closed before closing
+        if page and not page.is_closed():
             await page.close()

@@ -1,5 +1,8 @@
 from openai_agents.tool import tool, ToolError
 from ..tasks import add_monitoring_task, list_monitoring_tasks, get_monitoring_results
+import logging # Added
+
+logger = logging.getLogger(__name__) # Added
 
 # --- Tool Definitions ---
 
@@ -19,15 +22,16 @@ async def setup_monitoring_tool(topic: str, keywords: str, sources: str = "web_s
     Returns:
         A confirmation message with the task ID.
     """
-    print(f"Setting up monitoring for topic: {topic}")
+    logger.info(f"Setting up monitoring for topic: '{topic}', keywords: '{keywords[:50]}...', sources: '{sources}', freq: {frequency_hours}h")
     if frequency_hours < 1:
-        frequency_hours = 1 # Minimum frequency
+        logger.warning(f"Frequency hours {frequency_hours} is less than 1. Defaulting to 1 hour.")
+        frequency_hours = 1
     try:
-        task_id = add_monitoring_task(topic, keywords, sources, frequency_hours)
+        task_id = add_monitoring_task(topic, keywords, sources, frequency_hours) # This function in tasks.py now also logs
         return f"Monitoring task '{topic}' configured with ID: {task_id}. Will check every {frequency_hours} hours."
     except Exception as e:
-        print(f"Error setting up monitoring: {e}")
-        raise ToolError(tool_name="setup_monitoring_tool", message=f"Failed to setup monitoring: {e}")
+        logger.error(f"Error setting up monitoring for topic '{topic}': {e}", exc_info=True)
+        raise ToolError(tool_name="setup_monitoring_tool", message=f"Failed to setup monitoring: {str(e)}")
 
 @tool("Checks the status or retrieves the latest results for monitoring tasks.")
 async def check_monitoring_tool(task_id: str = None) -> str:
@@ -42,28 +46,36 @@ async def check_monitoring_tool(task_id: str = None) -> str:
     Returns:
         A list of active tasks or the latest report for the specified task.
     """
-    print(f"Checking monitoring tasks (ID: {task_id})")
+    logger.info(f"Checking monitoring tasks (Task ID: {task_id if task_id else 'ALL'})")
     try:
         if task_id:
-            results = get_monitoring_results(task_id)
-            if not results:
+            results = get_monitoring_results(task_id) # This function in tasks.py now also logs
+            if not results: # Assuming get_monitoring_results returns empty list if no results or task not found
+                logger.info(f"No results found or task ID '{task_id}' does not exist.")
                 return f"No results found for task ID '{task_id}', or task does not exist."
-            # Format results nicely
+
             report = f"Latest Findings for Task '{task_id}':\n"
-            # Assume results is a list of findings/articles with timestamps
-            for finding in results[:10]: # Show latest 10
-                 report += f"- {finding.get('timestamp')}: {finding.get('title', 'N/A')} ({finding.get('source_url', '')})\n"
-            return report
+            for finding in results[:10]:
+                 report += f"- Timestamp: {finding.get('timestamp', 'N/A')}\n  Title: {finding.get('title', 'N/A')}\n  Summary: {finding.get('summary', 'N/A')}\n  Sources: {', '.join(finding.get('source_urls', []))}\n---\n"
+            return report.strip()
         else:
-            tasks = list_monitoring_tasks()
+            tasks = list_monitoring_tasks() # This function in tasks.py now also logs
             if not tasks:
+                logger.info("No active monitoring tasks found.")
                 return "No active monitoring tasks found."
-            task_list = "Active Monitoring Tasks:\n"
-            for task in tasks:
-                task_list += f"- ID: {task.get('id')}, Topic: {task.get('topic')}, Freq: {task.get('frequency_hours')}h, Last Run: {task.get('last_run', 'Never')}\n"
-            return task_list
+            task_list_str = "Active Monitoring Tasks:\n" # Renamed to avoid conflict
+            for task_item in tasks: # Renamed to avoid conflict
+                task_list_str += (f"- ID: {task_item.get('id')}\n"
+                                  f"  Topic: {task_item.get('topic')}\n"
+                                  f"  Keywords: {task_item.get('keywords', 'N/A')}\n"
+                                  f"  Frequency: {task_item.get('frequency_hours')}h\n"
+                                  f"  Next Run: {task_item.get('next_run_time', 'N/A')}\n"
+                                  f"  Last Run: {task_item.get('last_run_time', 'Never')}\n"
+                                  f"  Status: {task_item.get('last_run_status', 'N/A')}\n"
+                                  f"  Findings (last run): {task_item.get('last_run_findings_count', 0)}\n---\n")
+            return task_list_str.strip()
     except Exception as e:
-        print(f"Error checking monitoring: {e}")
-        raise ToolError(tool_name="check_monitoring_tool", message=f"Failed to check monitoring status: {e}")
+        logger.error(f"Error checking monitoring (Task ID: {task_id if task_id else 'ALL'}): {e}", exc_info=True)
+        raise ToolError(tool_name="check_monitoring_tool", message=f"Failed to check monitoring status: {str(e)}")
 
 # TODO: Add tools for pausing, resuming, or deleting monitoring tasks.
